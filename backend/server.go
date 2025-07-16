@@ -44,14 +44,14 @@ func main() {
 
 	LogMiddleware := logger.Connect(logger.LoggerConnectProps{Production: false, LoggerProvider: loggerProvider})
 
-	_ = postgres.Connect(ctx, postgres.DatabaseConnectProps{Logger: LogMiddleware})
+	db := postgres.Connect(ctx, postgres.DatabaseConnectProps{Logger: LogMiddleware})
 	_ = geminiapi.Connect(ctx, geminiapi.GeminiConnectProps{Logger: LogMiddleware})
 
 	// Connect and start Telegram bot
 	groqClient := groqapi.Connect(ctx, groqapi.GroqConnectProps{Logger: LogMiddleware})
 	cartesiaClient := cartesiaapi.Connect(ctx, cartesiaapi.CartesiaConnectProps{Logger: LogMiddleware})
 	deepgramClient := deepgramapi.Connect(LogMiddleware)
-	telegramBot := telegram.Connect(ctx, telegram.TelegramConnectProps{Logger: LogMiddleware, Groq: groqClient, Cartesia: cartesiaClient, Deepgram: deepgramClient})
+	telegramBot := telegram.Connect(ctx, telegram.TelegramConnectProps{Logger: LogMiddleware, Groq: groqClient, Cartesia: cartesiaClient, Deepgram: deepgramClient, DB: db})
 
 	Logger := LogMiddleware.Logger(ctx)
 

@@ -2,6 +2,9 @@ package telegram
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
+	"gulabodev/database/postgres"
 	"gulabodev/logger"
 	"gulabodev/modelapi/cartesiaapi"
 	"gulabodev/modelapi/deepgramapi"
@@ -22,6 +25,7 @@ type TelegramConnectProps struct {
 	Groq     *groqapi.Groq
 	Cartesia *cartesiaapi.Cartesia
 	Deepgram *deepgramapi.DeepgramAPI
+	DB       *postgres.Database
 }
 
 type Telegram struct {
@@ -30,6 +34,7 @@ type Telegram struct {
 	groq     *groqapi.Groq
 	cartesia *cartesiaapi.Cartesia
 	deepgram *deepgramapi.DeepgramAPI
+	db       *postgres.Database
 }
 
 func Connect(ctx context.Context, args TelegramConnectProps) *Telegram {
@@ -67,6 +72,7 @@ func Connect(ctx context.Context, args TelegramConnectProps) *Telegram {
 		groq:     args.Groq,
 		cartesia: args.Cartesia,
 		deepgram: args.Deepgram,
+		db:       args.DB,
 	}
 }
 
@@ -121,6 +127,44 @@ func (t *Telegram) handleMessage(ctx context.Context, message *tgbotapi.Message)
 		attribute.String("user.username", user.UserName),
 	)
 
+	// Get or create user
+	_, err := t.db.GetUserByTelegramUserId(ctx, user.ID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// User not found, create new user
+			_, err := t.db.SetupNewUser(ctx, postgres.SetupNewUserProps{
+				TelegramUserID:    user.ID,
+				TelegramFirstName: user.FirstName,
+				TelegramUsername:  user.UserName,
+				TelegramLastName:  user.LastName,
+			})
+			if err != nil {
+				t.logger.Logger(ctx).Error("Failed to create new user", zap.Error(err), zap.Int64("user_id", user.ID))
+				return
+			}
+		} else {
+			t.logger.Logger(ctx).Error("Failed to get user", zap.Error(err), zap.Int64("user_id", user.ID))
+			return
+		}
+	}
+
+	// Get or create conversation
+	conversation, err := t.db.GetConversationByTelegramUserId(ctx, user.ID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// Conversation not found, create new one
+			newConversation, err := t.db.CreateConversation(ctx, user.ID)
+			if err != nil {
+				t.logger.Logger(ctx).Error("Failed to create conversation", zap.Error(err), zap.Int64("user_id", user.ID))
+				return
+			}
+			conversation = newConversation
+		} else {
+			t.logger.Logger(ctx).Error("Failed to get conversation", zap.Error(err), zap.Int64("user_id", user.ID))
+			return
+		}
+	}
+
 	// Handle text messages
 	if message.Text != "" {
 		span.SetAttributes(attribute.String("message.type", "text"))
@@ -129,7 +173,7 @@ func (t *Telegram) handleMessage(ctx context.Context, message *tgbotapi.Message)
 			zap.String("username", user.UserName),
 			zap.String("text", message.Text),
 		)
-		t.handleTextMessage(ctx, message)
+		t.handleTextMessage(ctx, message, conversation)
 		return
 	}
 
@@ -141,14 +185,21 @@ func (t *Telegram) handleMessage(ctx context.Context, message *tgbotapi.Message)
 			zap.String("username", user.UserName),
 			zap.Int("duration", message.Voice.Duration),
 		)
-		t.handleVoiceMessage(ctx, message)
+		t.handleVoiceMessage(ctx, message, conversation)
 		return
 	}
 }
 
-func (t *Telegram) handleTextMessage(ctx context.Context, message *tgbotapi.Message) {
+func (t *Telegram) handleTextMessage(ctx context.Context, message *tgbotapi.Message, conversation postgres.Conversation) {
+	var conversationHistory []groqapi.ChatCompletionInputMessage
+	if err := json.Unmarshal(conversation.Messages, &conversationHistory); err != nil {
+		t.logger.Logger(ctx).Error("Failed to unmarshal conversation history", zap.Error(err))
+		// Initialize as empty slice if unmarshal fails
+		conversationHistory = []groqapi.ChatCompletionInputMessage{}
+	}
+
 	// Generate response using Groq
-	response, err := t.groq.GetResponse(ctx, []groqapi.ChatCompletionInputMessage{}, message.Text)
+	response, err := t.groq.GetResponse(ctx, conversationHistory, message.Text)
 	response = strings.Trim(response, `\`)
 	response = strings.Trim(response, `\'`)
 	response = strings.Trim(response, `"`)
@@ -160,10 +211,33 @@ func (t *Telegram) handleTextMessage(ctx context.Context, message *tgbotapi.Mess
 		return
 	}
 
+	// Update conversation history
+	conversationHistory = append(conversationHistory, groqapi.ChatCompletionInputMessage{
+		Role:    groqapi.USER,
+		Content: message.Text,
+	})
+	conversationHistory = append(conversationHistory, groqapi.ChatCompletionInputMessage{
+		Role:    groqapi.ASSISTANT,
+		Content: response,
+	})
+
+	updatedMessages, err := json.Marshal(conversationHistory)
+	if err != nil {
+		t.logger.Logger(ctx).Error("Failed to marshal updated conversation history", zap.Error(err))
+	} else {
+		_, err = t.db.UpdateConversationMessages(ctx, postgres.UpdateConversationMessagesParams{
+			TelegramUserID: message.From.ID,
+			Messages:       updatedMessages,
+		})
+		if err != nil {
+			t.logger.Logger(ctx).Error("Failed to update conversation messages", zap.Error(err))
+		}
+	}
+
 	t.sendVoiceResponse(ctx, message.Chat.ID, response)
 }
 
-func (t *Telegram) handleVoiceMessage(ctx context.Context, message *tgbotapi.Message) {
+func (t *Telegram) handleVoiceMessage(ctx context.Context, message *tgbotapi.Message, conversation postgres.Conversation) {
 	// Download voice file
 	fileURL, err := t.bot.GetFileDirectURL(message.Voice.FileID)
 	if err != nil {
@@ -201,8 +275,15 @@ func (t *Telegram) handleVoiceMessage(ctx context.Context, message *tgbotapi.Mes
 		zap.String("transcript", transcript),
 	)
 
+	var conversationHistory []groqapi.ChatCompletionInputMessage
+	if err := json.Unmarshal(conversation.Messages, &conversationHistory); err != nil {
+		t.logger.Logger(ctx).Error("Failed to unmarshal conversation history", zap.Error(err))
+		// Initialize as empty slice if unmarshal fails
+		conversationHistory = []groqapi.ChatCompletionInputMessage{}
+	}
+
 	// Generate AI response
-	response, err := t.groq.GetResponse(ctx, []groqapi.ChatCompletionInputMessage{}, transcript)
+	response, err := t.groq.GetResponse(ctx, conversationHistory, transcript)
 	response = strings.Trim(response, `\`)
 	response = strings.Trim(response, `\'`)
 	response = strings.Trim(response, `"`)
@@ -212,6 +293,29 @@ func (t *Telegram) handleVoiceMessage(ctx context.Context, message *tgbotapi.Mes
 	if err != nil {
 		t.logger.Logger(ctx).Error("Failed to generate response", zap.Error(err))
 		return
+	}
+
+	// Update conversation history
+	conversationHistory = append(conversationHistory, groqapi.ChatCompletionInputMessage{
+		Role:    groqapi.USER,
+		Content: transcript,
+	})
+	conversationHistory = append(conversationHistory, groqapi.ChatCompletionInputMessage{
+		Role:    groqapi.ASSISTANT,
+		Content: response,
+	})
+
+	updatedMessages, err := json.Marshal(conversationHistory)
+	if err != nil {
+		t.logger.Logger(ctx).Error("Failed to marshal updated conversation history", zap.Error(err))
+	} else {
+		_, err = t.db.UpdateConversationMessages(ctx, postgres.UpdateConversationMessagesParams{
+			TelegramUserID: message.From.ID,
+			Messages:       updatedMessages,
+		})
+		if err != nil {
+			t.logger.Logger(ctx).Error("Failed to update conversation messages", zap.Error(err))
+		}
 	}
 
 	t.sendVoiceResponse(ctx, message.Chat.ID, response)

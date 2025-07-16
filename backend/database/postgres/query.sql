@@ -58,15 +58,3 @@ UPDATE conversations
 SET messages = $2, updated = CURRENT_TIMESTAMP 
 WHERE telegram_user_id = $1 
 RETURNING *;
-
--- name: GetConversationHistory :one
-SELECT * FROM conversations WHERE telegram_user_id = $1 LIMIT 1;
-
--- name: GetOrCreateConversation :one
-INSERT INTO conversations (telegram_user_id, messages)
-VALUES ($1, $2)
-ON CONFLICT (telegram_user_id) DO UPDATE SET
-  messages = EXCLUDED.messages,
-  updated = CURRENT_TIMESTAMP
-RETURNING *;
-

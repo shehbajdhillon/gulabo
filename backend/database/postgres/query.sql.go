@@ -133,50 +133,6 @@ func (q *Queries) GetConversationByTelegramUserId(ctx context.Context, telegramU
 	return i, err
 }
 
-const getConversationHistory = `-- name: GetConversationHistory :one
-SELECT id, telegram_user_id, messages, created, updated FROM conversations WHERE telegram_user_id = $1 LIMIT 1
-`
-
-func (q *Queries) GetConversationHistory(ctx context.Context, telegramUserID int64) (Conversation, error) {
-	row := q.db.QueryRowContext(ctx, getConversationHistory, telegramUserID)
-	var i Conversation
-	err := row.Scan(
-		&i.ID,
-		&i.TelegramUserID,
-		&i.Messages,
-		&i.Created,
-		&i.Updated,
-	)
-	return i, err
-}
-
-const getOrCreateConversation = `-- name: GetOrCreateConversation :one
-INSERT INTO conversations (telegram_user_id, messages)
-VALUES ($1, $2)
-ON CONFLICT (telegram_user_id) DO UPDATE SET
-  messages = EXCLUDED.messages,
-  updated = CURRENT_TIMESTAMP
-RETURNING id, telegram_user_id, messages, created, updated
-`
-
-type GetOrCreateConversationParams struct {
-	TelegramUserID int64
-	Messages       json.RawMessage
-}
-
-func (q *Queries) GetOrCreateConversation(ctx context.Context, arg GetOrCreateConversationParams) (Conversation, error) {
-	row := q.db.QueryRowContext(ctx, getOrCreateConversation, arg.TelegramUserID, arg.Messages)
-	var i Conversation
-	err := row.Scan(
-		&i.ID,
-		&i.TelegramUserID,
-		&i.Messages,
-		&i.Created,
-		&i.Updated,
-	)
-	return i, err
-}
-
 const getSubscriptionById = `-- name: GetSubscriptionById :one
 SELECT id, user_id, stripe_subscription_id, resources_included, resources_used, created FROM subscription_plan WHERE id = $1 LIMIT 1
 `

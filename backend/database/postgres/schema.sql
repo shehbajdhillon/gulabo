@@ -22,13 +22,11 @@ CREATE TABLE subscription_plan (
 DROP TABLE IF EXISTS conversations CASCADE;
 CREATE TABLE conversations (
   id BIGSERIAL PRIMARY KEY NOT NULL,
-  telegram_user_id BIGINT REFERENCES user_info (telegram_user_id) ON DELETE CASCADE NOT NULL,
+  telegram_user_id BIGINT UNIQUE REFERENCES user_info (telegram_user_id) ON DELETE CASCADE NOT NULL,
   messages JSONB NOT NULL DEFAULT '[]'::jsonb,
   created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Indexes for performance
-CREATE INDEX idx_conversations_telegram_user_id ON conversations (telegram_user_id);
 CREATE INDEX idx_conversations_messages ON conversations USING gin (messages);
-
