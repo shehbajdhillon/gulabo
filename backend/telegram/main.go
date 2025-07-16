@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"gulabodev/logger"
+	"gulabodev/modelapi/cartesiaapi"
 	"gulabodev/modelapi/groqapi"
 	"os"
 	"strings"
@@ -14,14 +15,16 @@ import (
 )
 
 type TelegramConnectProps struct {
-	Logger *logger.LogMiddleware
-	Groq   *groqapi.Groq
+	Logger   *logger.LogMiddleware
+	Groq     *groqapi.Groq
+	Cartesia *cartesiaapi.Cartesia
 }
 
 type Telegram struct {
-	logger *logger.LogMiddleware
-	bot    *tgbotapi.BotAPI
-	groq   *groqapi.Groq
+	logger   *logger.LogMiddleware
+	bot      *tgbotapi.BotAPI
+	groq     *groqapi.Groq
+	cartesia *cartesiaapi.Cartesia
 }
 
 func Connect(ctx context.Context, args TelegramConnectProps) *Telegram {
@@ -54,9 +57,10 @@ func Connect(ctx context.Context, args TelegramConnectProps) *Telegram {
 	)
 
 	return &Telegram{
-		logger: args.Logger,
-		bot:    bot,
-		groq:   args.Groq,
+		logger:   args.Logger,
+		bot:      bot,
+		groq:     args.Groq,
+		cartesia: args.Cartesia,
 	}
 }
 
@@ -135,6 +139,31 @@ func (t *Telegram) handleMessage(ctx context.Context, message *tgbotapi.Message)
 	if err != nil {
 		t.logger.Logger(ctx).Error("Failed to generate response", zap.Error(err))
 		return
+	}
+
+	// Generate audio using Cartesia
+	audioData, err := t.cartesia.GenerateSpeech(ctx, response)
+	if err != nil {
+		t.logger.Logger(ctx).Error("Failed to generate speech", zap.Error(err))
+		// Fallback to text if audio generation fails
+		msg := tgbotapi.NewMessage(message.Chat.ID, response)
+		_, err = t.bot.Send(msg)
+		if err != nil {
+			t.logger.Logger(ctx).Error("Failed to send text response", zap.Error(err))
+		}
+		return
+	}
+
+	// Send voice message
+	voice := tgbotapi.NewVoice(message.Chat.ID, tgbotapi.FileBytes{
+		Name:  "response.mp3",
+		Bytes: audioData,
+	})
+	_, err = t.bot.Send(voice)
+	if err != nil {
+		t.logger.Logger(ctx).Error("Failed to send voice message", zap.Error(err))
+	} else {
+		t.logger.Logger(ctx).Info("Sent voice message successfully", zap.Int("audio_size", len(audioData)))
 	}
 
 	// Send response back to user

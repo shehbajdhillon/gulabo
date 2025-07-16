@@ -25,6 +25,11 @@ type Cartesia struct {
 	semaphore *semaphore.Weighted
 }
 
+const (
+	maxRetries = 3
+	baseDelay  = 1 * time.Second
+)
+
 type VoiceConfig struct {
 	Mode string `json:"mode"`
 	ID   string `json:"id"`
