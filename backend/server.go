@@ -61,7 +61,7 @@ func main() {
 		Logger.Info("[Telegram] Bot starting in production mode")
 	}
 
-	// Start Telegram bot (blocking call).
+	// Start Telegram bot (blocking call)
 	telegramBot.Listen(ctx)
 }
 
@@ -75,4 +75,3 @@ func requestLoggerMiddleware(logger *logger.LogMiddleware) func(http.Handler) ht
 		})
 	}
 }
-
