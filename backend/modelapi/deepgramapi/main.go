@@ -40,8 +40,9 @@ func (d *DeepgramAPI) Transcribe(ctx context.Context, audioData []byte) (string,
 	options := &interfaces.PreRecordedTranscriptionOptions{
 		Punctuate:  true,
 		Diarize:    false,
-		Language:   "en-US",
+		Language:   "multi",
 		Utterances: true,
+		Model:      "nova-3",
 	}
 
 	audioReader := bytes.NewReader(audioData)
