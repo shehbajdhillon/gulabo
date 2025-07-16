@@ -48,10 +48,10 @@ func main() {
 	_ = deepgramapi.Connect(LogMiddleware)
 	_ = geminiapi.Connect(ctx, geminiapi.GeminiConnectProps{Logger: LogMiddleware})
 	_ = cartesiaapi.Connect(ctx, cartesiaapi.CartesiaConnectProps{Logger: LogMiddleware})
-	_ = groqapi.Connect(ctx, groqapi.GroqConnectProps{Logger: LogMiddleware})
 
 	// Connect and start Telegram bot
-	telegramBot := telegram.Connect(ctx, telegram.TelegramConnectProps{Logger: LogMiddleware})
+	groqClient := groqapi.Connect(ctx, groqapi.GroqConnectProps{Logger: LogMiddleware})
+	telegramBot := telegram.Connect(ctx, telegram.TelegramConnectProps{Logger: LogMiddleware, Groq: groqClient})
 
 	Logger := LogMiddleware.Logger(ctx)
 

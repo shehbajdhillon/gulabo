@@ -241,7 +241,7 @@ func (o *Groq) MakeAPIRequest(ctx context.Context, args MakeAPIRequestProps) (*G
 	return nil, fmt.Errorf("Groq Requests Failed")
 }
 
-func (a *Groq) getResponse(ctx context.Context, userMessage string) (string, error) {
+func (a *Groq) GetResponse(ctx context.Context, userMessage string) (string, error) {
 	tracer := otel.Tracer("groqapi/summarizeIssues")
 	ctx, span := tracer.Start(ctx, "summarizeIssues")
 	defer span.End()

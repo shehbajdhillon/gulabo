@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"gulabodev/logger"
+	"gulabodev/modelapi/groqapi"
 	"os"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -13,11 +14,13 @@ import (
 
 type TelegramConnectProps struct {
 	Logger *logger.LogMiddleware
+	Groq   *groqapi.Groq
 }
 
 type Telegram struct {
 	logger *logger.LogMiddleware
 	bot    *tgbotapi.BotAPI
+	groq   *groqapi.Groq
 }
 
 func Connect(ctx context.Context, args TelegramConnectProps) *Telegram {
@@ -52,6 +55,7 @@ func Connect(ctx context.Context, args TelegramConnectProps) *Telegram {
 	return &Telegram{
 		logger: args.Logger,
 		bot:    bot,
+		groq:   args.Groq,
 	}
 }
 
@@ -113,8 +117,24 @@ func (t *Telegram) handleMessage(ctx context.Context, message *tgbotapi.Message)
 		zap.String("text", message.Text),
 	)
 
-	// TODO: Implement actual message handling logic
-	// For now, just log the message
+	// Only process text messages
+	if message.Text == "" {
+		return
+	}
+
+	// Generate response using Groq
+	response, err := t.groq.GetResponse(ctx, message.Text)
+	if err != nil {
+		t.logger.Logger(ctx).Error("Failed to generate response", zap.Error(err))
+		return
+	}
+
+	// Send response back to user
+	msg := tgbotapi.NewMessage(message.Chat.ID, response)
+	_, err = t.bot.Send(msg)
+	if err != nil {
+		t.logger.Logger(ctx).Error("Failed to send response", zap.Error(err))
+	}
 }
 
 func (t *Telegram) handleCallbackQuery(ctx context.Context, query *tgbotapi.CallbackQuery) {
