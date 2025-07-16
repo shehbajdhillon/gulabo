@@ -165,14 +165,14 @@ func (t *Telegram) handleMessage(ctx context.Context, message *tgbotapi.Message)
 		}
 	}
 
-	// Handle commands
-	if message.IsCommand() {
-		t.handleCommand(ctx, message)
-		return
-	}
-
 	// Handle text messages
 	if message.Text != "" {
+
+		if strings.HasPrefix(message.Text, "/") {
+			t.handleCommand(ctx, message)
+			return
+		}
+
 		span.SetAttributes(attribute.String("message.type", "text"))
 		t.logger.Logger(ctx).Info("Received text message",
 			zap.Int64("user_id", user.ID),
@@ -197,11 +197,11 @@ func (t *Telegram) handleMessage(ctx context.Context, message *tgbotapi.Message)
 }
 
 func (t *Telegram) handleCommand(ctx context.Context, message *tgbotapi.Message) {
-	command := message.Command()
+	command := message.Text
 	var responseText string
 
 	switch command {
-	case "start":
+	case "/start":
 		responseText = "Hey there! I'm Gulabo, your AI girlfriend. I'm so excited to get to know you. Send me a message or a voice note and let's have some fun! 😉"
 	default:
 		responseText = "Sorry, baby. I don't understand that command. Just talk to me normally."
@@ -350,4 +350,3 @@ func (t *Telegram) handleCallbackQuery(ctx context.Context, query *tgbotapi.Call
 	callback := tgbotapi.NewCallback(query.ID, "")
 	t.bot.Send(callback)
 }
-
