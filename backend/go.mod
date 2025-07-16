@@ -6,7 +6,6 @@ toolchain go1.23.11
 
 require (
 	github.com/deepgram/deepgram-go-sdk v1.9.0
-	github.com/go-chi/chi/v5 v5.2.2
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
 	github.com/google/generative-ai-go v0.20.1
 	github.com/hyperdxio/opentelemetry-go/otelzap v0.2.1
@@ -14,12 +13,10 @@ require (
 	github.com/hyperdxio/otel-config-go v1.12.3
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.10.9
-	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.61.0
 	go.opentelemetry.io/otel v1.37.0
 	go.opentelemetry.io/otel/trace v1.37.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/sync v0.16.0
-	golang.org/x/text v0.26.0
 	google.golang.org/api v0.241.0
 )
 
@@ -57,6 +54,7 @@ require (
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.61.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/host v0.44.0 // indirect
+	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.61.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/runtime v0.44.0 // indirect
 	go.opentelemetry.io/contrib/propagators/b3 v1.19.0 // indirect
 	go.opentelemetry.io/contrib/propagators/ot v1.19.0 // indirect
@@ -75,6 +73,7 @@ require (
 	golang.org/x/net v0.41.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
 	golang.org/x/sys v0.33.0 // indirect
+	golang.org/x/text v0.26.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250505200425-f936aa4a68b2 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250603155806-513f23925822 // indirect
