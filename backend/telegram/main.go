@@ -165,6 +165,12 @@ func (t *Telegram) handleMessage(ctx context.Context, message *tgbotapi.Message)
 		}
 	}
 
+	// Handle commands
+	if message.IsCommand() {
+		t.handleCommand(ctx, message)
+		return
+	}
+
 	// Handle text messages
 	if message.Text != "" {
 		span.SetAttributes(attribute.String("message.type", "text"))
@@ -187,6 +193,24 @@ func (t *Telegram) handleMessage(ctx context.Context, message *tgbotapi.Message)
 		)
 		t.handleVoiceMessage(ctx, message, conversation)
 		return
+	}
+}
+
+func (t *Telegram) handleCommand(ctx context.Context, message *tgbotapi.Message) {
+	command := message.Command()
+	var responseText string
+
+	switch command {
+	case "start":
+		responseText = "Hey there! I'm Gulabo, your AI girlfriend. I'm so excited to get to know you. Send me a message or a voice note and let's have some fun! 😉"
+	default:
+		responseText = "Sorry, baby. I don't understand that command. Just talk to me normally."
+	}
+
+	msg := tgbotapi.NewMessage(message.Chat.ID, responseText)
+	_, err := t.bot.Send(msg)
+	if err != nil {
+		t.logger.Logger(ctx).Error("Failed to send command response", zap.Error(err), zap.String("command", command))
 	}
 }
 
@@ -326,3 +350,4 @@ func (t *Telegram) handleCallbackQuery(ctx context.Context, query *tgbotapi.Call
 	callback := tgbotapi.NewCallback(query.ID, "")
 	t.bot.Send(callback)
 }
+
