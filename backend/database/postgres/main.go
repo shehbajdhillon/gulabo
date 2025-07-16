@@ -6,12 +6,9 @@ import (
 	"fmt"
 	"gulabodev/logger"
 	"os"
-	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 
 	"go.opentelemetry.io/otel"
 	"go.uber.org/zap"
@@ -98,8 +95,10 @@ func getConnection(ctx context.Context) (*sql.DB, error, string) {
 }
 
 type SetupNewUserProps struct {
-	EmailAddr string
-	FullName  string
+	TelegramUserID    int64
+	TelegramFirstName string
+	TelegramUsername  string
+	TelegramLastName  string
 }
 
 func (d *Database) SetupNewUser(ctx context.Context, args SetupNewUserProps) (*UserInfo, error) {
@@ -107,21 +106,17 @@ func (d *Database) SetupNewUser(ctx context.Context, args SetupNewUserProps) (*U
 	ctx, span := tracer.Start(ctx, "SetupNewUser")
 	defer span.End()
 
-	fName := args.FullName
-	emailAddr := args.EmailAddr
-
-	fullName := cases.Title(language.Und).String(strings.ToLower(fName))
-
 	user, err := d.Queries.AddUser(ctx, AddUserParams{
-		Email:    emailAddr,
-		FullName: fullName,
+		TelegramUserID:    args.TelegramUserID,
+		TelegramUsername:  sql.NullString{Valid: true, String: args.TelegramUsername},
+		TelegramFirstName: sql.NullString{Valid: true, String: args.TelegramFirstName},
+		TelegramLastName:  sql.NullString{Valid: true, String: args.TelegramLastName},
 	})
 	if err != nil {
 		d.logger.Logger(ctx).Error(
 			"[Postgres] Could not setup new user",
 			zap.Error(err),
-			zap.String("user_email", emailAddr),
-			zap.String("user_name", fName),
+			zap.Int64("telegram_user_id", args.TelegramUserID),
 		)
 		span.RecordError(err)
 		return nil, fmt.Errorf("could not setup new user")

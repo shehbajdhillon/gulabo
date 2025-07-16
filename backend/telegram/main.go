@@ -148,7 +148,7 @@ func (t *Telegram) handleMessage(ctx context.Context, message *tgbotapi.Message)
 
 func (t *Telegram) handleTextMessage(ctx context.Context, message *tgbotapi.Message) {
 	// Generate response using Groq
-	response, err := t.groq.GetResponse(ctx, message.Text)
+	response, err := t.groq.GetResponse(ctx, []groqapi.ChatCompletionInputMessage{}, message.Text)
 	response = strings.Trim(response, `\`)
 	response = strings.Trim(response, `\'`)
 	response = strings.Trim(response, `"`)
@@ -202,7 +202,7 @@ func (t *Telegram) handleVoiceMessage(ctx context.Context, message *tgbotapi.Mes
 	)
 
 	// Generate AI response
-	response, err := t.groq.GetResponse(ctx, transcript)
+	response, err := t.groq.GetResponse(ctx, []groqapi.ChatCompletionInputMessage{}, transcript)
 	response = strings.Trim(response, `\`)
 	response = strings.Trim(response, `\'`)
 	response = strings.Trim(response, `"`)

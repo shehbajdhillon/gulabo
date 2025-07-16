@@ -20,6 +20,12 @@ import (
 type PropertyType string
 
 const (
+	ASSISTANT = "assistant"
+	SYSTEM    = "system"
+	USER      = "user"
+)
+
+const (
 	maxRetries = 3
 	baseDelay  = 1 * time.Second
 )
@@ -241,13 +247,14 @@ func (o *Groq) MakeAPIRequest(ctx context.Context, args MakeAPIRequestProps) (*G
 	return nil, fmt.Errorf("Groq Requests Failed")
 }
 
-func (a *Groq) GetResponse(ctx context.Context, userMessage string) (string, error) {
-	tracer := otel.Tracer("groqapi/summarizeIssues")
-	ctx, span := tracer.Start(ctx, "summarizeIssues")
+func (a *Groq) GetResponse(ctx context.Context, conversationHistory []ChatCompletionInputMessage, newUserMessage string) (string, error) {
+	tracer := otel.Tracer("groqapi/GetResponse")
+	ctx, span := tracer.Start(ctx, "GetResponse")
 	defer span.End()
 
 	span.SetAttributes(
-		attribute.String("userMessage", userMessage),
+		attribute.Int("conversation_history_length", len(conversationHistory)),
+		attribute.String("new_user_message", newUserMessage),
 	)
 
 	systemPrompt := `
@@ -265,21 +272,29 @@ Keep it natural, engaging, and voice-ready. Never break character.
 
   `
 
+	// Build messages array with system prompt + conversation history + new message
+	messages := []ChatCompletionInputMessage{
+		{
+			Role:    SYSTEM,
+			Content: systemPrompt,
+		},
+	}
+
+	// Add conversation history
+	messages = append(messages, conversationHistory...)
+
+	// Add new user message
+	messages = append(messages, ChatCompletionInputMessage{
+		Role:    USER,
+		Content: newUserMessage,
+	})
+
 	requestInput := MakeAPIRequestProps{
 		Retries: 3,
 		RequestInput: ChatRequestInput{
 			Model:     "moonshotai/kimi-k2-instruct",
 			MaxTokens: 2048,
-			Messages: []ChatCompletionInputMessage{
-				{
-					Role:    "system",
-					Content: systemPrompt,
-				},
-				{
-					Role:    "user",
-					Content: userMessage,
-				},
-			},
+			Messages:  messages,
 		},
 	}
 
@@ -288,7 +303,7 @@ Keep it natural, engaging, and voice-ready. Never break character.
 		return "", err
 	}
 
-	// Parse the tool call response
+	// Parse the response
 	if len(resp.Choices) == 0 || len(resp.Choices[0].Message.Content) == 0 {
 		return "", fmt.Errorf("no response received")
 	}
