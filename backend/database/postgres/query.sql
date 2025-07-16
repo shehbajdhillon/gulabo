@@ -10,37 +10,23 @@ SELECT * FROM user_info WHERE telegram_user_id = $1 LIMIT 1;
 -- name: DeleteUserByTelegramUserId :exec
 DELETE FROM user_info WHERE telegram_user_id = $1;
 
--------------------- Subscription Plan Queries --------------------
+-------------------- User Credits Queries --------------------
 
--- name: IncrementSubscriptionResourcesUsedByTeamId :one
-UPDATE subscription_plan SET resources_used = resources_used + $1 WHERE user_id = $2 RETURNING *;
+-- name: CreateUserCredits :one
+INSERT INTO user_credits (user_id, credits_balance) VALUES ($1, 20) RETURNING *;
 
--- name: CreateSubscription :one
-INSERT INTO subscription_plan
-(user_id, stripe_subscription_id, resources_included)
-VALUES ($1, $2, $3) RETURNING *;
+-- name: GetUserCreditsByUserID :one
+SELECT * FROM user_credits WHERE user_id = $1 LIMIT 1;
 
--- name: GetSubscriptionByTeamId :one
-SELECT * FROM subscription_plan WHERE user_id = $1 ORDER BY created LIMIT 1;
+-- name: AddUserCredits :one
+UPDATE user_credits
+SET credits_balance = credits_balance + sqlc.arg(amount), updated = CURRENT_TIMESTAMP
+WHERE user_id = sqlc.arg(user_id)
+RETURNING *;
 
--- name: GetSubscriptionByTeamIdSubscriptionId :one
-SELECT * FROM subscription_plan WHERE user_id = $1 AND id = $2 LIMIT 1;
-
--- name: GetSubscriptionById :one
-SELECT * FROM subscription_plan WHERE id = $1 LIMIT 1;
-
--- name: GetSubscriptionByStripeSubscriptionId :one
-SELECT * FROM subscription_plan WHERE stripe_subscription_id = $1 LIMIT 1;
-
--- name: SetSubscriptionStripeIdByTeamId :one
-UPDATE subscription_plan SET stripe_subscription_id = $2 WHERE user_id = $1 RETURNING *;
-
--- name: DeleteSubscriptionByStripeSubscriptionId :one
-DELETE FROM subscription_plan WHERE stripe_subscription_id = $1 RETURNING *;
-
--- name: ResetSubscriptionResourcesUsed :one
-UPDATE subscription_plan
-SET resources_used = 0
+-- name: DecrementUserCredits :one
+UPDATE user_credits
+SET credits_balance = credits_balance - 1, updated = CURRENT_TIMESTAMP
 WHERE user_id = $1
 RETURNING *;
 

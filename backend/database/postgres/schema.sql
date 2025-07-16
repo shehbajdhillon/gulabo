@@ -8,15 +8,15 @@ CREATE TABLE user_info (
   created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-DROP TABLE IF EXISTS subscription_plan CASCADE;
-CREATE TABLE subscription_plan (
+DROP TABLE IF EXISTS user_credits CASCADE;
+CREATE TABLE user_credits (
   id BIGSERIAL PRIMARY KEY NOT NULL,
   user_id BIGINT REFERENCES user_info (user_id) ON DELETE CASCADE UNIQUE NOT NULL,
-  stripe_subscription_id TEXT UNIQUE,
-  resources_included INT NOT NULL DEFAULT 0,
-  resources_used INT NOT NULL DEFAULT 0,
-  created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+  credits_balance INT NOT NULL DEFAULT 20,
+  created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE INDEX idx_user_credits_user_id ON user_credits(user_id);
 
 -- Simplified conversations with JSONB message history
 DROP TABLE IF EXISTS conversations CASCADE;

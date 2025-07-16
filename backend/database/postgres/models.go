@@ -18,13 +18,12 @@ type Conversation struct {
 	Updated        time.Time
 }
 
-type SubscriptionPlan struct {
-	ID                   int64
-	UserID               int64
-	StripeSubscriptionID sql.NullString
-	ResourcesIncluded    int32
-	ResourcesUsed        int32
-	Created              time.Time
+type UserCredit struct {
+	ID             int64
+	UserID         int64
+	CreditsBalance int32
+	Created        time.Time
+	Updated        time.Time
 }
 
 type UserInfo struct {
