@@ -5,6 +5,7 @@ import (
 	"gulabodev/logger"
 	"gulabodev/modelapi/groqapi"
 	"os"
+	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"go.opentelemetry.io/otel"
@@ -124,6 +125,13 @@ func (t *Telegram) handleMessage(ctx context.Context, message *tgbotapi.Message)
 
 	// Generate response using Groq
 	response, err := t.groq.GetResponse(ctx, message.Text)
+
+	response = strings.Trim(response, `\"`)
+	response = strings.Trim(response, `\'`)
+	response = strings.Trim(response, `"`)
+	response = strings.Trim(response, `'`)
+	response = strings.Trim(response, `“`)
+
 	if err != nil {
 		t.logger.Logger(ctx).Error("Failed to generate response", zap.Error(err))
 		return
@@ -134,6 +142,8 @@ func (t *Telegram) handleMessage(ctx context.Context, message *tgbotapi.Message)
 	_, err = t.bot.Send(msg)
 	if err != nil {
 		t.logger.Logger(ctx).Error("Failed to send response", zap.Error(err))
+	} else {
+		t.logger.Logger(ctx).Info("Sent message successfully", zap.String("Message", response))
 	}
 }
 
