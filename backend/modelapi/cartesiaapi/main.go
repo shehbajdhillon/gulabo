@@ -83,14 +83,14 @@ func (c *Cartesia) GenerateSpeech(ctx context.Context, text string) ([]byte, err
 		Transcript: text,
 		Voice: VoiceConfig{
 			Mode: "id",
-			ID:   LAIDBACK_WOMAN,
+			ID:   HINGLISH_WOMAN,
 		},
 		OutputFormat: OutputFormat{
 			Container:  "mp3",
 			BitRate:    128000,
 			SampleRate: 44100,
 		},
-		Language: "en",
+		Language: "hi",
 	}
 
 	jsonData, err := json.Marshal(request)
