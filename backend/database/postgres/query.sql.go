@@ -8,28 +8,57 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 )
 
 const addUser = `-- name: AddUser :one
 
-INSERT INTO user_info (email, full_name) VALUES ($1, $2) RETURNING user_id, email, full_name, onboarding_complete, created
+INSERT INTO user_info (telegram_user_id, telegram_username, telegram_first_name, telegram_last_name) VALUES ($1, $2, $3, $4) RETURNING user_id, telegram_user_id, telegram_username, telegram_first_name, telegram_last_name, created
 `
 
 type AddUserParams struct {
-	Email    string
-	FullName string
+	TelegramUserID    int64
+	TelegramUsername  sql.NullString
+	TelegramFirstName sql.NullString
+	TelegramLastName  sql.NullString
 }
 
 // ------------------ UserInfo Queries --------------------
 func (q *Queries) AddUser(ctx context.Context, arg AddUserParams) (UserInfo, error) {
-	row := q.db.QueryRowContext(ctx, addUser, arg.Email, arg.FullName)
+	row := q.db.QueryRowContext(ctx, addUser,
+		arg.TelegramUserID,
+		arg.TelegramUsername,
+		arg.TelegramFirstName,
+		arg.TelegramLastName,
+	)
 	var i UserInfo
 	err := row.Scan(
 		&i.UserID,
-		&i.Email,
-		&i.FullName,
-		&i.OnboardingComplete,
+		&i.TelegramUserID,
+		&i.TelegramUsername,
+		&i.TelegramFirstName,
+		&i.TelegramLastName,
 		&i.Created,
+	)
+	return i, err
+}
+
+const createConversation = `-- name: CreateConversation :one
+
+INSERT INTO conversations (telegram_user_id, messages)
+VALUES ($1, '[]'::jsonb) RETURNING id, telegram_user_id, messages, created, updated
+`
+
+// ------------------ Conversation Queries --------------------
+func (q *Queries) CreateConversation(ctx context.Context, telegramUserID int64) (Conversation, error) {
+	row := q.db.QueryRowContext(ctx, createConversation, telegramUserID)
+	var i Conversation
+	err := row.Scan(
+		&i.ID,
+		&i.TelegramUserID,
+		&i.Messages,
+		&i.Created,
+		&i.Updated,
 	)
 	return i, err
 }
@@ -78,13 +107,74 @@ func (q *Queries) DeleteSubscriptionByStripeSubscriptionId(ctx context.Context, 
 	return i, err
 }
 
-const deleteUserById = `-- name: DeleteUserById :exec
-DELETE FROM user_info WHERE user_id = $1
+const deleteUserByTelegramUserId = `-- name: DeleteUserByTelegramUserId :exec
+DELETE FROM user_info WHERE telegram_user_id = $1
 `
 
-func (q *Queries) DeleteUserById(ctx context.Context, userID int64) error {
-	_, err := q.db.ExecContext(ctx, deleteUserById, userID)
+func (q *Queries) DeleteUserByTelegramUserId(ctx context.Context, telegramUserID int64) error {
+	_, err := q.db.ExecContext(ctx, deleteUserByTelegramUserId, telegramUserID)
 	return err
+}
+
+const getConversationByTelegramUserId = `-- name: GetConversationByTelegramUserId :one
+SELECT id, telegram_user_id, messages, created, updated FROM conversations WHERE telegram_user_id = $1 LIMIT 1
+`
+
+func (q *Queries) GetConversationByTelegramUserId(ctx context.Context, telegramUserID int64) (Conversation, error) {
+	row := q.db.QueryRowContext(ctx, getConversationByTelegramUserId, telegramUserID)
+	var i Conversation
+	err := row.Scan(
+		&i.ID,
+		&i.TelegramUserID,
+		&i.Messages,
+		&i.Created,
+		&i.Updated,
+	)
+	return i, err
+}
+
+const getConversationHistory = `-- name: GetConversationHistory :one
+SELECT id, telegram_user_id, messages, created, updated FROM conversations WHERE telegram_user_id = $1 LIMIT 1
+`
+
+func (q *Queries) GetConversationHistory(ctx context.Context, telegramUserID int64) (Conversation, error) {
+	row := q.db.QueryRowContext(ctx, getConversationHistory, telegramUserID)
+	var i Conversation
+	err := row.Scan(
+		&i.ID,
+		&i.TelegramUserID,
+		&i.Messages,
+		&i.Created,
+		&i.Updated,
+	)
+	return i, err
+}
+
+const getOrCreateConversation = `-- name: GetOrCreateConversation :one
+INSERT INTO conversations (telegram_user_id, messages)
+VALUES ($1, $2)
+ON CONFLICT (telegram_user_id) DO UPDATE SET
+  messages = EXCLUDED.messages,
+  updated = CURRENT_TIMESTAMP
+RETURNING id, telegram_user_id, messages, created, updated
+`
+
+type GetOrCreateConversationParams struct {
+	TelegramUserID int64
+	Messages       json.RawMessage
+}
+
+func (q *Queries) GetOrCreateConversation(ctx context.Context, arg GetOrCreateConversationParams) (Conversation, error) {
+	row := q.db.QueryRowContext(ctx, getOrCreateConversation, arg.TelegramUserID, arg.Messages)
+	var i Conversation
+	err := row.Scan(
+		&i.ID,
+		&i.TelegramUserID,
+		&i.Messages,
+		&i.Created,
+		&i.Updated,
+	)
+	return i, err
 }
 
 const getSubscriptionById = `-- name: GetSubscriptionById :one
@@ -164,35 +254,19 @@ func (q *Queries) GetSubscriptionByTeamIdSubscriptionId(ctx context.Context, arg
 	return i, err
 }
 
-const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT user_id, email, full_name, onboarding_complete, created FROM user_info WHERE email = $1 LIMIT 1
+const getUserByTelegramUserId = `-- name: GetUserByTelegramUserId :one
+SELECT user_id, telegram_user_id, telegram_username, telegram_first_name, telegram_last_name, created FROM user_info WHERE telegram_user_id = $1 LIMIT 1
 `
 
-func (q *Queries) GetUserByEmail(ctx context.Context, email string) (UserInfo, error) {
-	row := q.db.QueryRowContext(ctx, getUserByEmail, email)
+func (q *Queries) GetUserByTelegramUserId(ctx context.Context, telegramUserID int64) (UserInfo, error) {
+	row := q.db.QueryRowContext(ctx, getUserByTelegramUserId, telegramUserID)
 	var i UserInfo
 	err := row.Scan(
 		&i.UserID,
-		&i.Email,
-		&i.FullName,
-		&i.OnboardingComplete,
-		&i.Created,
-	)
-	return i, err
-}
-
-const getUserById = `-- name: GetUserById :one
-SELECT user_id, email, full_name, onboarding_complete, created FROM user_info WHERE user_id = $1 LIMIT 1
-`
-
-func (q *Queries) GetUserById(ctx context.Context, userID int64) (UserInfo, error) {
-	row := q.db.QueryRowContext(ctx, getUserById, userID)
-	var i UserInfo
-	err := row.Scan(
-		&i.UserID,
-		&i.Email,
-		&i.FullName,
-		&i.OnboardingComplete,
+		&i.TelegramUserID,
+		&i.TelegramUsername,
+		&i.TelegramFirstName,
+		&i.TelegramLastName,
 		&i.Created,
 	)
 	return i, err
@@ -267,16 +341,27 @@ func (q *Queries) SetSubscriptionStripeIdByTeamId(ctx context.Context, arg SetSu
 	return i, err
 }
 
-const updateOnboardingStatus = `-- name: UpdateOnboardingStatus :exec
-UPDATE user_info SET onboarding_complete = $1 WHERE user_id = $2
+const updateConversationMessages = `-- name: UpdateConversationMessages :one
+UPDATE conversations 
+SET messages = $2, updated = CURRENT_TIMESTAMP 
+WHERE telegram_user_id = $1 
+RETURNING id, telegram_user_id, messages, created, updated
 `
 
-type UpdateOnboardingStatusParams struct {
-	OnboardingComplete bool
-	UserID             int64
+type UpdateConversationMessagesParams struct {
+	TelegramUserID int64
+	Messages       json.RawMessage
 }
 
-func (q *Queries) UpdateOnboardingStatus(ctx context.Context, arg UpdateOnboardingStatusParams) error {
-	_, err := q.db.ExecContext(ctx, updateOnboardingStatus, arg.OnboardingComplete, arg.UserID)
-	return err
+func (q *Queries) UpdateConversationMessages(ctx context.Context, arg UpdateConversationMessagesParams) (Conversation, error) {
+	row := q.db.QueryRowContext(ctx, updateConversationMessages, arg.TelegramUserID, arg.Messages)
+	var i Conversation
+	err := row.Scan(
+		&i.ID,
+		&i.TelegramUserID,
+		&i.Messages,
+		&i.Created,
+		&i.Updated,
+	)
+	return i, err
 }

@@ -6,8 +6,17 @@ package postgres
 
 import (
 	"database/sql"
+	"encoding/json"
 	"time"
 )
+
+type Conversation struct {
+	ID             int64
+	TelegramUserID int64
+	Messages       json.RawMessage
+	Created        time.Time
+	Updated        time.Time
+}
 
 type SubscriptionPlan struct {
 	ID                   int64
@@ -19,9 +28,10 @@ type SubscriptionPlan struct {
 }
 
 type UserInfo struct {
-	UserID             int64
-	Email              string
-	FullName           string
-	OnboardingComplete bool
-	Created            time.Time
+	UserID            int64
+	TelegramUserID    int64
+	TelegramUsername  sql.NullString
+	TelegramFirstName sql.NullString
+	TelegramLastName  sql.NullString
+	Created           time.Time
 }

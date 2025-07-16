@@ -1,19 +1,14 @@
 -------------------- UserInfo Queries --------------------
 
 -- name: AddUser :one
-INSERT INTO user_info (email, full_name) VALUES ($1, $2) RETURNING *;
+INSERT INTO user_info (telegram_user_id, telegram_username, telegram_first_name, telegram_last_name) VALUES ($1, $2, $3, $4) RETURNING *;
 
--- name: GetUserByEmail :one
-SELECT * FROM user_info WHERE email = $1 LIMIT 1;
 
--- name: GetUserById :one
-SELECT * FROM user_info WHERE user_id = $1 LIMIT 1;
+-- name: GetUserByTelegramUserId :one
+SELECT * FROM user_info WHERE telegram_user_id = $1 LIMIT 1;
 
--- name: DeleteUserById :exec
-DELETE FROM user_info WHERE user_id = $1;
-
--- name: UpdateOnboardingStatus :exec
-UPDATE user_info SET onboarding_complete = $1 WHERE user_id = $2;
+-- name: DeleteUserByTelegramUserId :exec
+DELETE FROM user_info WHERE telegram_user_id = $1;
 
 -------------------- Subscription Plan Queries --------------------
 
@@ -47,5 +42,31 @@ DELETE FROM subscription_plan WHERE stripe_subscription_id = $1 RETURNING *;
 UPDATE subscription_plan
 SET resources_used = 0
 WHERE user_id = $1
+RETURNING *;
+
+-------------------- Conversation Queries --------------------
+
+-- name: CreateConversation :one
+INSERT INTO conversations (telegram_user_id, messages)
+VALUES ($1, '[]'::jsonb) RETURNING *;
+
+-- name: GetConversationByTelegramUserId :one
+SELECT * FROM conversations WHERE telegram_user_id = $1 LIMIT 1;
+
+-- name: UpdateConversationMessages :one
+UPDATE conversations 
+SET messages = $2, updated = CURRENT_TIMESTAMP 
+WHERE telegram_user_id = $1 
+RETURNING *;
+
+-- name: GetConversationHistory :one
+SELECT * FROM conversations WHERE telegram_user_id = $1 LIMIT 1;
+
+-- name: GetOrCreateConversation :one
+INSERT INTO conversations (telegram_user_id, messages)
+VALUES ($1, $2)
+ON CONFLICT (telegram_user_id) DO UPDATE SET
+  messages = EXCLUDED.messages,
+  updated = CURRENT_TIMESTAMP
 RETURNING *;
 
