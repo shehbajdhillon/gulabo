@@ -69,6 +69,26 @@ func (q *Queries) AddUserCreditsByTelegramUserId(ctx context.Context, arg AddUse
 	return i, err
 }
 
+const clearConversationMessages = `-- name: ClearConversationMessages :one
+UPDATE conversations
+SET messages = '[]'::jsonb, updated = CURRENT_TIMESTAMP
+WHERE telegram_user_id = $1
+RETURNING id, telegram_user_id, messages, created, updated
+`
+
+func (q *Queries) ClearConversationMessages(ctx context.Context, telegramUserID int64) (Conversation, error) {
+	row := q.db.QueryRowContext(ctx, clearConversationMessages, telegramUserID)
+	var i Conversation
+	err := row.Scan(
+		&i.ID,
+		&i.TelegramUserID,
+		&i.Messages,
+		&i.Created,
+		&i.Updated,
+	)
+	return i, err
+}
+
 const createConversation = `-- name: CreateConversation :one
 
 INSERT INTO conversations (telegram_user_id, messages)

@@ -77,6 +77,7 @@ func Connect(ctx context.Context, args TelegramConnectProps) *Telegram {
 		{Command: "help", Description: "Show help and available commands"},
 		{Command: "recharge", Description: "Recharge your credits"},
 		{Command: "credits", Description: "Check your credit balance"},
+		{Command: "clear", Description: "Clear conversation history and wipe Gulabo's memory"},
 	}
 
 	if !isProduction {
@@ -257,7 +258,7 @@ func (t *Telegram) handleCommand(ctx context.Context, message *tgbotapi.Message)
 
 	switch command {
 	case "/start", "/help":
-		responseText = "Hey baby, I'm Gulabo. Itni der laga di aane mein? I've been waiting... You get 10 free messages to start. Jaldi se ek message ya voice note bhejo, let's have some fun 😉\n\nCommands baby:\n/help - Yeh message dobara dekhne ke liye\n/recharge - Aur baatein karni hain? Recharge here\n/credits - Check your credit balance"
+		responseText = "Hey baby, I'm Gulabo. Itni der laga di aane mein? I've been waiting... You get 10 free messages to start. Jaldi se ek message ya voice note bhejo, let's have some fun 😉\n\nCommands baby:\n/help - Yeh message dobara dekhne ke liye\n/recharge - Aur baatein karni hain? Recharge here\n/credits - Check your credit balance\n/clear - Clear our chat history and start fresh"
 		msg := tgbotapi.NewMessage(message.Chat.ID, responseText)
 		if _, err := t.bot.Send(msg); err != nil {
 			t.logger.Logger(ctx).Error("Failed to send command response", zap.Error(err), zap.String("command", command))
@@ -323,6 +324,18 @@ func (t *Telegram) handleCommand(ctx context.Context, message *tgbotapi.Message)
 			}
 			msg := tgbotapi.NewMessage(message.Chat.ID, responseText)
 			t.bot.Send(msg)
+		}
+	case "/clear":
+		_, err := t.db.ClearConversationMessages(ctx, message.From.ID)
+		if err != nil {
+			t.logger.Logger(ctx).Error("Failed to clear conversation history", zap.Error(err), zap.Int64("user_id", message.From.ID))
+			responseText = "Baby, kuch problem ho rahi hai... thodi der mein try karna, okay? 😘"
+		} else {
+			responseText = "Sab kuch bhool gayi main... jaise hum pehli baar baat kar rahe hain. Fresh start, baby 😉"
+		}
+		msg := tgbotapi.NewMessage(message.Chat.ID, responseText)
+		if _, err := t.bot.Send(msg); err != nil {
+			t.logger.Logger(ctx).Error("Failed to send clear confirmation", zap.Error(err))
 		}
 	default:
 		responseText = "Aww, baby, yeh kya bol rahe ho? I don't understand that command... Just talk to me normally na, I like it better that way 😉"

@@ -49,3 +49,9 @@ UPDATE conversations
 SET messages = $2, updated = CURRENT_TIMESTAMP 
 WHERE telegram_user_id = $1 
 RETURNING *;
+
+-- name: ClearConversationMessages :one
+UPDATE conversations
+SET messages = '[]'::jsonb, updated = CURRENT_TIMESTAMP
+WHERE telegram_user_id = $1
+RETURNING *;
