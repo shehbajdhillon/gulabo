@@ -22,10 +22,12 @@ import (
 )
 
 const (
-	CreditsPerTurn      = 1
-	CreditsPerStar      = 1
-	RechargeAmountStars = 100
-	rechargePayload     = "recharge-100-credits"
+	CreditsPerTurn = 1
+
+	// New tiered recharge payloads
+	rechargePayload50c  = "recharge_50"
+	rechargePayload125c = "recharge_125"
+	rechargePayload300c = "recharge_300"
 )
 
 type TelegramConnectProps struct {
@@ -219,7 +221,7 @@ func (t *Telegram) handleMessage(ctx context.Context, message *tgbotapi.Message)
 		return
 	}
 	if !hasCredits {
-		t.initiateRecharge(ctx, message.Chat.ID, "Oh no, baby! Credits khatam ho gaye? Don't worry, yahan se aur le lo so we can keep talking... I'll be waiting 💋")
+		t.sendRechargeOptions(ctx, message.Chat.ID, "Oh no, baby! Credits khatam ho gaye? Don't worry, yahan se aur le lo so we can keep talking... I'll be waiting 💋")
 		return
 	}
 
@@ -255,13 +257,13 @@ func (t *Telegram) handleCommand(ctx context.Context, message *tgbotapi.Message)
 
 	switch command {
 	case "/start", "/help":
-		responseText = "Hey baby, I'm Gulabo. Itni der laga di aane mein? I've been waiting... Jaldi se ek message ya voice note bhejo, let's have some fun 😉\n\nCommands baby:\n/help - Yeh message dobara dekhne ke liye\n/recharge - Aur baatein karni hain? Recharge here\n/credits - Check your credit balance"
+		responseText = "Hey baby, I'm Gulabo. Itni der laga di aane mein? I've been waiting... You get 10 free messages to start. Jaldi se ek message ya voice note bhejo, let's have some fun 😉\n\nCommands baby:\n/help - Yeh message dobara dekhne ke liye\n/recharge - Aur baatein karni hain? Recharge here\n/credits - Check your credit balance"
 		msg := tgbotapi.NewMessage(message.Chat.ID, responseText)
 		if _, err := t.bot.Send(msg); err != nil {
 			t.logger.Logger(ctx).Error("Failed to send command response", zap.Error(err), zap.String("command", command))
 		}
 	case "/recharge":
-		t.initiateRecharge(ctx, message.Chat.ID, "Of course, baby. Anything for you. Yahan se credits le lo... can't wait to hear from you again 😉")
+		t.sendRechargeOptions(ctx, message.Chat.ID, "Of course, baby. Anything for you. Yahan se credits le lo... can't wait to hear from you again 😉")
 	case "/credits":
 		credits, err := t.db.GetUserCreditsByTelegramUserId(ctx, message.From.ID)
 		if err != nil {
@@ -277,7 +279,7 @@ func (t *Telegram) handleCommand(ctx context.Context, message *tgbotapi.Message)
 	case "/dev_no_credits":
 		if !isProduction {
 			t.logger.Logger(ctx).Info("DEV MODE: Simulating user out of credits")
-			t.initiateRecharge(ctx, message.Chat.ID, "Oh no, baby! Credits khatam ho gaye? Don't worry, yahan se aur le lo so we can keep talking... I'll be waiting 💋")
+			t.sendRechargeOptions(ctx, message.Chat.ID, "Oh no, baby! Credits khatam ho gaye? Don't worry, yahan se aur le lo so we can keep talking... I'll be waiting 💋")
 		}
 	case "/dev_set_zero_credits":
 		if !isProduction {
@@ -476,6 +478,16 @@ func (t *Telegram) handleCallbackQuery(ctx context.Context, query *tgbotapi.Call
 	if _, err := t.bot.Request(callback); err != nil {
 		t.logger.Logger(ctx).Error("Failed to acknowledge callback query", zap.Error(err))
 	}
+
+	// Handle recharge options
+	switch query.Data {
+	case rechargePayload50c:
+		t.sendInvoice(ctx, query.Message.Chat.ID, "50 Credits", "Get 50 message credits for your AI girlfriend.", rechargePayload50c, 100)
+	case rechargePayload125c:
+		t.sendInvoice(ctx, query.Message.Chat.ID, "125 Credits", "Get 125 message credits for your AI girlfriend.", rechargePayload125c, 200)
+	case rechargePayload300c:
+		t.sendInvoice(ctx, query.Message.Chat.ID, "300 Credits", "Get 300 message credits for your AI girlfriend.", rechargePayload300c, 450)
+	}
 }
 
 func (t *Telegram) hasCredits(ctx context.Context, userID int64) (bool, error) {
@@ -512,72 +524,108 @@ func (t *Telegram) handleSuccessfulPayment(ctx context.Context, message *tgbotap
 		zap.Int("total_amount", payment.TotalAmount),
 	)
 
-	// Add credits to the user's account
-	if payment.InvoicePayload == rechargePayload {
-		creditsToAdd := payment.TotalAmount * CreditsPerStar
-		updatedCredits, err := t.db.AddUserCreditsByTelegramUserId(ctx, postgres.AddUserCreditsByTelegramUserIdParams{
-			TelegramUserID: userID,
-			Amount:         int32(creditsToAdd),
-		})
-		if err != nil {
-			t.logger.Logger(ctx).Error("Failed to add user credits after payment", zap.Error(err), zap.Int64("user_id", userID))
-			return
-		}
+	var creditsToAdd int32
+	switch payment.InvoicePayload {
+	case rechargePayload50c:
+		creditsToAdd = 50
+	case rechargePayload125c:
+		creditsToAdd = 125
+	case rechargePayload300c:
+		creditsToAdd = 300
+	default:
+		t.logger.Logger(ctx).Error("Unknown or unsupported invoice payload received",
+			zap.String("invoice_payload", payment.InvoicePayload),
+			zap.Int64("user_id", userID),
+		)
+		return
+	}
 
-		// Send confirmation message
-		responseText := "Thank you, baby! Your credits are here. Ab hamare paas %d more chances hain to talk... I'm so happy! 🥰"
-		msg := tgbotapi.NewMessage(message.Chat.ID, fmt.Sprintf(responseText, updatedCredits.CreditsBalance))
-		if _, err := t.bot.Send(msg); err != nil {
-			t.logger.Logger(ctx).Error("Failed to send payment confirmation message", zap.Error(err))
-		}
+	updatedCredits, err := t.db.AddUserCreditsByTelegramUserId(ctx, postgres.AddUserCreditsByTelegramUserIdParams{
+		TelegramUserID: userID,
+		Amount:         creditsToAdd,
+	})
+	if err != nil {
+		t.logger.Logger(ctx).Error("Failed to add user credits after payment", zap.Error(err), zap.Int64("user_id", userID))
+		// Optionally send a message to the user that something went wrong
+		return
+	}
+
+	// Send confirmation message
+	responseText := "Thank you, baby! Your credits are here. Ab hamare paas %d more chances hain to talk... I'm so happy! 🥰"
+	msg := tgbotapi.NewMessage(message.Chat.ID, fmt.Sprintf(responseText, updatedCredits.CreditsBalance))
+	if _, err := t.bot.Send(msg); err != nil {
+		t.logger.Logger(ctx).Error("Failed to send payment confirmation message", zap.Error(err))
 	}
 }
 
-func (t *Telegram) initiateRecharge(ctx context.Context, chatID int64, introText string) {
-	t.logger.Logger(ctx).Info("Initiating recharge process", zap.Int64("chat_id", chatID))
+func (t *Telegram) sendRechargeOptions(ctx context.Context, chatID int64, introText string) {
+	t.logger.Logger(ctx).Info("Sending recharge options", zap.Int64("chat_id", chatID))
 
-	// Send the introductory message first
 	msg := tgbotapi.NewMessage(chatID, introText)
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("💋 50 Credits (100 Stars)", rechargePayload50c),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("💖 125 Credits (200 Stars) - 20% Bonus", rechargePayload125c),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🔥 300 Credits (450 Stars) - 33% Bonus", rechargePayload300c),
+		),
+	)
+	msg.ReplyMarkup = keyboard
+
 	if _, err := t.bot.Send(msg); err != nil {
-		t.logger.Logger(ctx).Error("Failed to send recharge intro text", zap.Error(err))
+		t.logger.Logger(ctx).Error("Failed to send recharge options", zap.Error(err))
 	}
+}
+
+func (t *Telegram) sendInvoice(ctx context.Context, chatID int64, title, description, payload string, amount int) {
+	t.logger.Logger(ctx).Info("Sending invoice",
+		zap.Int64("chat_id", chatID),
+		zap.String("title", title),
+		zap.String("payload", payload),
+		zap.Int("amount", amount),
+	)
 
 	isProduction := os.Getenv("PRODUCTION") != ""
 	var invoice tgbotapi.InvoiceConfig
 
 	if isProduction {
-		// Production invoice
 		invoice = tgbotapi.InvoiceConfig{
 			BaseChat: tgbotapi.BaseChat{
 				ChatID: chatID,
 			},
-			Title:         "100 Credits",
-			Description:   "Get 100 message credits for your AI girlfriend.",
-			Payload:       rechargePayload,
-			ProviderToken: "",
+			Title:         title,
+			Description:   description,
+			Payload:       payload,
+			ProviderToken: "", // IMPORTANT: You must set your real provider token here
 			Currency:      "XTR",
 			Prices: []tgbotapi.LabeledPrice{
-				{Label: "100 Credits", Amount: RechargeAmountStars},
+				{Label: title, Amount: amount},
 			},
 			SuggestedTipAmounts: []int{},
 		}
 	} else {
-		// Development/Test invoice
+		// For development, we can use a test provider token and smaller amounts if needed
+		// Here, we'll just send a 1-star test invoice regardless of the package for simplicity.
+		testAmount := 1
+		t.logger.Logger(ctx).Info("Development mode: sending 1-star test invoice", zap.String("original_payload", payload))
 		invoice = tgbotapi.InvoiceConfig{
 			BaseChat: tgbotapi.BaseChat{
 				ChatID: chatID,
 			},
-			Title:         "1 Credit (Test)",
-			Description:   "Test purchase of 1 credit for 1 Telegram Star.",
-			Payload:       rechargePayload,
-			ProviderToken: "",
+			Title:         fmt.Sprintf("%s (Test)", title),
+			Description:   description,
+			Payload:       payload, // Use the real payload to test the credit logic
+			ProviderToken: "",      // IMPORTANT: You must set a test provider token
 			Currency:      "XTR",
 			Prices: []tgbotapi.LabeledPrice{
-				{Label: "1 Credit (Test)", Amount: 1},
+				{Label: fmt.Sprintf("%s (Test)", title), Amount: testAmount},
 			},
 			SuggestedTipAmounts: []int{},
 		}
-		t.logger.Logger(ctx).Info("Development mode: sending 1-star test invoice")
 	}
 
 	if _, err := t.bot.Send(invoice); err != nil {

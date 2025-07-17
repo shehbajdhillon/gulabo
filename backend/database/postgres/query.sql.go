@@ -91,7 +91,7 @@ func (q *Queries) CreateConversation(ctx context.Context, telegramUserID int64) 
 
 const createUserCredits = `-- name: CreateUserCredits :one
 
-INSERT INTO user_credits (user_id, credits_balance) VALUES ($1, 20) RETURNING id, user_id, credits_balance, created, updated
+INSERT INTO user_credits (user_id, credits_balance) VALUES ($1, 10) RETURNING id, user_id, credits_balance, created, updated
 `
 
 // ------------------ User Credits Queries --------------------

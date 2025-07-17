@@ -13,7 +13,7 @@ DELETE FROM user_info WHERE telegram_user_id = $1;
 -------------------- User Credits Queries --------------------
 
 -- name: CreateUserCredits :one
-INSERT INTO user_credits (user_id, credits_balance) VALUES ($1, 20) RETURNING *;
+INSERT INTO user_credits (user_id, credits_balance) VALUES ($1, 10) RETURNING *;
 
 -- name: GetUserCreditsByUserID :one
 SELECT * FROM user_credits WHERE user_id = $1 LIMIT 1;
