@@ -43,20 +43,21 @@ func (q *Queries) AddUser(ctx context.Context, arg AddUserParams) (UserInfo, err
 	return i, err
 }
 
-const addUserCredits = `-- name: AddUserCredits :one
+const addUserCreditsByTelegramUserId = `-- name: AddUserCreditsByTelegramUserId :one
 UPDATE user_credits
 SET credits_balance = credits_balance + $1, updated = CURRENT_TIMESTAMP
-WHERE user_id = $2
-RETURNING id, user_id, credits_balance, created, updated
+FROM user_info
+WHERE user_credits.user_id = user_info.user_id AND user_info.telegram_user_id = $2
+RETURNING user_credits.id, user_credits.user_id, user_credits.credits_balance, user_credits.created, user_credits.updated
 `
 
-type AddUserCreditsParams struct {
-	Amount int32
-	UserID int64
+type AddUserCreditsByTelegramUserIdParams struct {
+	Amount         int32
+	TelegramUserID int64
 }
 
-func (q *Queries) AddUserCredits(ctx context.Context, arg AddUserCreditsParams) (UserCredit, error) {
-	row := q.db.QueryRowContext(ctx, addUserCredits, arg.Amount, arg.UserID)
+func (q *Queries) AddUserCreditsByTelegramUserId(ctx context.Context, arg AddUserCreditsByTelegramUserIdParams) (UserCredit, error) {
+	row := q.db.QueryRowContext(ctx, addUserCreditsByTelegramUserId, arg.Amount, arg.TelegramUserID)
 	var i UserCredit
 	err := row.Scan(
 		&i.ID,
@@ -107,15 +108,16 @@ func (q *Queries) CreateUserCredits(ctx context.Context, userID int64) (UserCred
 	return i, err
 }
 
-const decrementUserCredits = `-- name: DecrementUserCredits :one
+const decrementUserCreditsByTelegramUserId = `-- name: DecrementUserCreditsByTelegramUserId :one
 UPDATE user_credits
 SET credits_balance = credits_balance - 1, updated = CURRENT_TIMESTAMP
-WHERE user_id = $1
-RETURNING id, user_id, credits_balance, created, updated
+FROM user_info
+WHERE user_credits.user_id = user_info.user_id AND user_info.telegram_user_id = $1 AND user_credits.credits_balance > 0
+RETURNING user_credits.id, user_credits.user_id, user_credits.credits_balance, user_credits.created, user_credits.updated
 `
 
-func (q *Queries) DecrementUserCredits(ctx context.Context, userID int64) (UserCredit, error) {
-	row := q.db.QueryRowContext(ctx, decrementUserCredits, userID)
+func (q *Queries) DecrementUserCreditsByTelegramUserId(ctx context.Context, telegramUserID int64) (UserCredit, error) {
+	row := q.db.QueryRowContext(ctx, decrementUserCreditsByTelegramUserId, telegramUserID)
 	var i UserCredit
 	err := row.Scan(
 		&i.ID,
@@ -169,6 +171,17 @@ func (q *Queries) GetUserByTelegramUserId(ctx context.Context, telegramUserID in
 		&i.Created,
 	)
 	return i, err
+}
+
+const getUserCreditsByTelegramUserId = `-- name: GetUserCreditsByTelegramUserId :one
+SELECT uc.credits_balance FROM user_credits uc JOIN user_info ui ON uc.user_id = ui.user_id WHERE ui.telegram_user_id = $1
+`
+
+func (q *Queries) GetUserCreditsByTelegramUserId(ctx context.Context, telegramUserID int64) (int32, error) {
+	row := q.db.QueryRowContext(ctx, getUserCreditsByTelegramUserId, telegramUserID)
+	var credits_balance int32
+	err := row.Scan(&credits_balance)
+	return credits_balance, err
 }
 
 const getUserCreditsByUserID = `-- name: GetUserCreditsByUserID :one

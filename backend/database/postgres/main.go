@@ -122,5 +122,16 @@ func (d *Database) SetupNewUser(ctx context.Context, args SetupNewUserProps) (*U
 		return nil, fmt.Errorf("could not setup new user")
 	}
 
+	_, err = d.Queries.CreateUserCredits(ctx, user.UserID)
+	if err != nil {
+		d.logger.Logger(ctx).Error(
+			"[Postgres] Could not setup new user credits",
+			zap.Error(err),
+			zap.Int64("telegram_user_id", args.TelegramUserID),
+		)
+		span.RecordError(err)
+		return nil, fmt.Errorf("could not setup new user credits")
+	}
+
 	return &user, err
 }

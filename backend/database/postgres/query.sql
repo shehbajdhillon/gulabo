@@ -18,17 +18,22 @@ INSERT INTO user_credits (user_id, credits_balance) VALUES ($1, 20) RETURNING *;
 -- name: GetUserCreditsByUserID :one
 SELECT * FROM user_credits WHERE user_id = $1 LIMIT 1;
 
--- name: AddUserCredits :one
+-- name: GetUserCreditsByTelegramUserId :one
+SELECT uc.credits_balance FROM user_credits uc JOIN user_info ui ON uc.user_id = ui.user_id WHERE ui.telegram_user_id = $1;
+
+-- name: AddUserCreditsByTelegramUserId :one
 UPDATE user_credits
 SET credits_balance = credits_balance + sqlc.arg(amount), updated = CURRENT_TIMESTAMP
-WHERE user_id = sqlc.arg(user_id)
-RETURNING *;
+FROM user_info
+WHERE user_credits.user_id = user_info.user_id AND user_info.telegram_user_id = sqlc.arg(telegram_user_id)
+RETURNING user_credits.*;
 
--- name: DecrementUserCredits :one
+-- name: DecrementUserCreditsByTelegramUserId :one
 UPDATE user_credits
 SET credits_balance = credits_balance - 1, updated = CURRENT_TIMESTAMP
-WHERE user_id = $1
-RETURNING *;
+FROM user_info
+WHERE user_credits.user_id = user_info.user_id AND user_info.telegram_user_id = $1 AND user_credits.credits_balance > 0
+RETURNING user_credits.*;
 
 -------------------- Conversation Queries --------------------
 

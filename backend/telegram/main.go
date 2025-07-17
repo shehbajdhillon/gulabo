@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"gulabodev/database/postgres"
 	"gulabodev/logger"
 	"gulabodev/modelapi/cartesiaapi"
@@ -18,6 +19,13 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
+)
+
+const (
+	CreditsPerTurn      = 1
+	CreditsPerStar      = 1
+	RechargeAmountStars = 100
+	rechargePayload     = "recharge-100-credits"
 )
 
 type TelegramConnectProps struct {
@@ -60,6 +68,30 @@ func Connect(ctx context.Context, args TelegramConnectProps) *Telegram {
 		attribute.String("bot.username", bot.Self.UserName),
 		attribute.Bool("bot.debug", debug),
 	)
+
+	// Set bot commands for autocompletion
+	isProduction := os.Getenv("PRODUCTION") != ""
+	commands := []tgbotapi.BotCommand{
+		{Command: "help", Description: "Show help and available commands"},
+		{Command: "recharge", Description: "Recharge your credits"},
+		{Command: "credits", Description: "Check your credit balance"},
+	}
+
+	if !isProduction {
+		devCommands := []tgbotapi.BotCommand{
+			{Command: "dev_no_credits", Description: "DEV: Simulate out of credits"},
+			{Command: "dev_set_zero_credits", Description: "DEV: Set your credits to 0"},
+			{Command: "dev_add_10_credits", Description: "DEV: Add 10 credits"},
+		}
+		commands = append(commands, devCommands...)
+	}
+
+	myCommandsConfig := tgbotapi.NewSetMyCommands(commands...)
+	if _, err := bot.Request(myCommandsConfig); err != nil {
+		args.Logger.Logger(ctx).Error("Failed to set bot commands", zap.Error(err))
+	} else {
+		args.Logger.Logger(ctx).Info("Successfully set bot commands")
+	}
 
 	args.Logger.Logger(ctx).Info("Telegram bot connected successfully",
 		zap.String("username", bot.Self.UserName),
@@ -105,6 +137,8 @@ func (t *Telegram) handleUpdate(ctx context.Context, update tgbotapi.Update) {
 	defer span.End()
 
 	switch {
+	case update.PreCheckoutQuery != nil:
+		t.handlePreCheckoutQuery(ctx, update.PreCheckoutQuery)
 	case update.Message != nil:
 		t.handleMessage(ctx, update.Message)
 	case update.CallbackQuery != nil:
@@ -118,6 +152,12 @@ func (t *Telegram) handleMessage(ctx context.Context, message *tgbotapi.Message)
 	defer span.End()
 
 	if message.From == nil {
+		return
+	}
+
+	// Handle successful payments first
+	if message.SuccessfulPayment != nil {
+		t.handleSuccessfulPayment(ctx, message)
 		return
 	}
 
@@ -165,14 +205,26 @@ func (t *Telegram) handleMessage(ctx context.Context, message *tgbotapi.Message)
 		}
 	}
 
+	// Handle commands first, as they don't require credits
+	if message.Text != "" && strings.HasPrefix(message.Text, "/") {
+		t.handleCommand(ctx, message)
+		return
+	}
+
+	// For all other messages, check for credits before processing
+	hasCredits, err := t.hasCredits(ctx, user.ID)
+	if err != nil {
+		t.logger.Logger(ctx).Error("Failed to check user credits", zap.Error(err), zap.Int64("user_id", user.ID))
+		// Optionally, send a generic error message to the user
+		return
+	}
+	if !hasCredits {
+		t.initiateRecharge(ctx, message.Chat.ID, "Oh no, baby! Credits khatam ho gaye? Don't worry, yahan se aur le lo so we can keep talking... I'll be waiting 💋")
+		return
+	}
+
 	// Handle text messages
 	if message.Text != "" {
-
-		if strings.HasPrefix(message.Text, "/") {
-			t.handleCommand(ctx, message)
-			return
-		}
-
 		span.SetAttributes(attribute.String("message.type", "text"))
 		t.logger.Logger(ctx).Info("Received text message",
 			zap.Int64("user_id", user.ID),
@@ -199,18 +251,84 @@ func (t *Telegram) handleMessage(ctx context.Context, message *tgbotapi.Message)
 func (t *Telegram) handleCommand(ctx context.Context, message *tgbotapi.Message) {
 	command := message.Text
 	var responseText string
+	isProduction := os.Getenv("PRODUCTION") != ""
 
 	switch command {
-	case "/start":
-		responseText = "Hey there! I'm Gulabo, your AI girlfriend. I'm so excited to get to know you. Send me a message or a voice note and let's have some fun! 😉"
-	default:
-		responseText = "Sorry, baby. I don't understand that command. Just talk to me normally."
-	}
+	case "/start", "/help":
+		responseText = "Hey baby, I'm Gulabo. Itni der laga di aane mein? I've been waiting... Jaldi se ek message ya voice note bhejo, let's have some fun 😉\n\nCommands baby:\n/help - Yeh message dobara dekhne ke liye\n/recharge - Aur baatein karni hain? Recharge here\n/credits - Check your credit balance"
+		msg := tgbotapi.NewMessage(message.Chat.ID, responseText)
+		if _, err := t.bot.Send(msg); err != nil {
+			t.logger.Logger(ctx).Error("Failed to send command response", zap.Error(err), zap.String("command", command))
+		}
+	case "/recharge":
+		t.initiateRecharge(ctx, message.Chat.ID, "Of course, baby. Anything for you. Yahan se credits le lo... can't wait to hear from you again 😉")
+	case "/credits":
+		credits, err := t.db.GetUserCreditsByTelegramUserId(ctx, message.From.ID)
+		if err != nil {
+			t.logger.Logger(ctx).Error("Failed to get user credits", zap.Error(err), zap.Int64("user_id", message.From.ID))
+			responseText = "Uff, baby, abhi credits nahi dekh pa rahi. Thodi der mein try karna, okay? 😘"
+		} else {
+			responseText = fmt.Sprintf("Baby, you have %d credits left to whisper sweet nothings to me... ✨", credits)
+		}
+		msg := tgbotapi.NewMessage(message.Chat.ID, responseText)
+		if _, err := t.bot.Send(msg); err != nil {
+			t.logger.Logger(ctx).Error("Failed to send credits balance message", zap.Error(err))
+		}
+	case "/dev_no_credits":
+		if !isProduction {
+			t.logger.Logger(ctx).Info("DEV MODE: Simulating user out of credits")
+			t.initiateRecharge(ctx, message.Chat.ID, "Oh no, baby! Credits khatam ho gaye? Don't worry, yahan se aur le lo so we can keep talking... I'll be waiting 💋")
+		}
+	case "/dev_set_zero_credits":
+		if !isProduction {
+			t.logger.Logger(ctx).Info("DEV MODE: Setting user credits to 0")
+			currentCredits, err := t.db.GetUserCreditsByTelegramUserId(ctx, message.From.ID)
+			if err != nil && err != sql.ErrNoRows {
+				t.logger.Logger(ctx).Error("DEV: Failed to get user credits", zap.Error(err))
+				return
+			}
 
-	msg := tgbotapi.NewMessage(message.Chat.ID, responseText)
-	_, err := t.bot.Send(msg)
-	if err != nil {
-		t.logger.Logger(ctx).Error("Failed to send command response", zap.Error(err), zap.String("command", command))
+			if currentCredits > 0 {
+				_, err = t.db.AddUserCreditsByTelegramUserId(ctx, postgres.AddUserCreditsByTelegramUserIdParams{
+					TelegramUserID: message.From.ID,
+					Amount:         -int32(currentCredits),
+				})
+				if err != nil {
+					t.logger.Logger(ctx).Error("DEV: Failed to set credits to zero", zap.Error(err))
+					responseText = "DEV: Failed to set credits to 0."
+				} else {
+					responseText = "DEV: Credits have been set to 0."
+				}
+			} else {
+				responseText = "DEV: Credits are already 0 or less."
+			}
+			msg := tgbotapi.NewMessage(message.Chat.ID, responseText)
+			t.bot.Send(msg)
+		}
+	case "/dev_add_10_credits":
+		if !isProduction {
+			t.logger.Logger(ctx).Info("DEV MODE: Adding 10 credits to user")
+			_, err := t.db.AddUserCreditsByTelegramUserId(ctx, postgres.AddUserCreditsByTelegramUserIdParams{
+				TelegramUserID: message.From.ID,
+				Amount:         10,
+			})
+			if err != nil {
+				t.logger.Logger(ctx).Error("DEV: Failed to add 10 credits", zap.Error(err))
+				responseText = "DEV: Failed to add 10 credits."
+			} else {
+				newBalance, _ := t.db.GetUserCreditsByTelegramUserId(ctx, message.From.ID)
+				responseText = fmt.Sprintf("DEV: 10 credits added. New balance: %d", newBalance)
+			}
+			msg := tgbotapi.NewMessage(message.Chat.ID, responseText)
+			t.bot.Send(msg)
+		}
+	default:
+		responseText = "Aww, baby, yeh kya bol rahe ho? I don't understand that command... Just talk to me normally na, I like it better that way 😉"
+		msg := tgbotapi.NewMessage(message.Chat.ID, responseText)
+		_, err := t.bot.Send(msg)
+		if err != nil {
+			t.logger.Logger(ctx).Error("Failed to send command response", zap.Error(err), zap.String("command", command))
+		}
 	}
 }
 
@@ -254,7 +372,7 @@ func (t *Telegram) processAndRespond(ctx context.Context, message *tgbotapi.Mess
 		}
 	}
 
-	t.sendVoiceResponse(ctx, message.Chat.ID, response)
+	t.sendVoiceResponse(ctx, message.Chat.ID, message.From.ID, response)
 }
 
 func (t *Telegram) handleVoiceMessage(ctx context.Context, message *tgbotapi.Message, conversation postgres.Conversation) {
@@ -298,7 +416,7 @@ func (t *Telegram) handleVoiceMessage(ctx context.Context, message *tgbotapi.Mes
 	t.processAndRespond(ctx, message, conversation, transcript)
 }
 
-func (t *Telegram) sendVoiceResponse(ctx context.Context, chatID int64, response string) {
+func (t *Telegram) sendVoiceResponse(ctx context.Context, chatID int64, userID int64, response string) {
 	// Generate audio using Cartesia
 	audioData, err := t.cartesia.GenerateSpeech(ctx, response)
 	if err != nil {
@@ -309,19 +427,30 @@ func (t *Telegram) sendVoiceResponse(ctx context.Context, chatID int64, response
 		if err != nil {
 			t.logger.Logger(ctx).Error("Failed to send text response", zap.Error(err))
 		}
-		return
+		return // Even on fallback, we proceed to deduct credit if sending was successful
+	} else {
+		// Send voice message
+		voice := tgbotapi.NewVoice(chatID, tgbotapi.FileBytes{
+			Name:  "response.mp3",
+			Bytes: audioData,
+		})
+		_, err = t.bot.Send(voice)
+		if err != nil {
+			t.logger.Logger(ctx).Error("Failed to send voice message", zap.Error(err))
+		} else {
+			t.logger.Logger(ctx).Info("Sent voice message successfully", zap.Int("audio_size", len(audioData)))
+		}
 	}
 
-	// Send voice message
-	voice := tgbotapi.NewVoice(chatID, tgbotapi.FileBytes{
-		Name:  "response.mp3",
-		Bytes: audioData,
-	})
-	_, err = t.bot.Send(voice)
-	if err != nil {
-		t.logger.Logger(ctx).Error("Failed to send voice message", zap.Error(err))
-	} else {
-		t.logger.Logger(ctx).Info("Sent voice message successfully", zap.Int("audio_size", len(audioData)))
+	// Deduct credit only after a message has been successfully sent
+	if err == nil {
+		_, err := t.db.DecrementUserCreditsByTelegramUserId(ctx, userID)
+		if err != nil {
+			t.logger.Logger(ctx).Error("Failed to decrement user credits after sending message", zap.Error(err), zap.Int64("user_id", userID))
+			// We don't return an error to the user, but this is a critical issue to log
+		} else {
+			t.logger.Logger(ctx).Info("User credits deducted successfully after response.", zap.Int64("user_id", userID))
+		}
 	}
 }
 
@@ -329,24 +458,129 @@ func (t *Telegram) handleCallbackQuery(ctx context.Context, query *tgbotapi.Call
 	tracer := otel.Tracer("telegram/handleCallbackQuery")
 	ctx, span := tracer.Start(ctx, "handleCallbackQuery")
 	defer span.End()
-
 	if query.From == nil {
 		return
 	}
-
 	span.SetAttributes(
 		attribute.Int64("user.id", query.From.ID),
 		attribute.String("user.username", query.From.UserName),
 		attribute.String("callback.data", query.Data),
 	)
-
 	t.logger.Logger(ctx).Info("Received callback query",
 		zap.Int64("user_id", query.From.ID),
 		zap.String("username", query.From.UserName),
 		zap.String("data", query.Data),
 	)
-
-	// Acknowledge the callback
+	// Acknowledge the callback first
 	callback := tgbotapi.NewCallback(query.ID, "")
-	t.bot.Send(callback)
+	if _, err := t.bot.Request(callback); err != nil {
+		t.logger.Logger(ctx).Error("Failed to acknowledge callback query", zap.Error(err))
+	}
+}
+
+func (t *Telegram) hasCredits(ctx context.Context, userID int64) (bool, error) {
+	credits, err := t.db.GetUserCreditsByTelegramUserId(ctx, userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// This case should ideally not be hit if SetupNewUser works correctly,
+			// but as a safeguard, we treat it as no credits.
+			return false, nil
+		}
+		return false, err
+	}
+	return credits > 0, nil
+}
+
+func (t *Telegram) handlePreCheckoutQuery(ctx context.Context, preCheckoutQuery *tgbotapi.PreCheckoutQuery) {
+	// Answer the pre-checkout query to confirm the transaction can proceed
+	_, err := t.bot.Request(tgbotapi.PreCheckoutConfig{
+		PreCheckoutQueryID: preCheckoutQuery.ID,
+		OK:                 true,
+	})
+	if err != nil {
+		t.logger.Logger(ctx).Error("Failed to answer pre-checkout query", zap.Error(err))
+	}
+}
+
+func (t *Telegram) handleSuccessfulPayment(ctx context.Context, message *tgbotapi.Message) {
+	payment := message.SuccessfulPayment
+	userID := message.From.ID
+
+	t.logger.Logger(ctx).Info("Successful payment received",
+		zap.Int64("user_id", userID),
+		zap.String("invoice_payload", payment.InvoicePayload),
+		zap.Int("total_amount", payment.TotalAmount),
+	)
+
+	// Add credits to the user's account
+	if payment.InvoicePayload == rechargePayload {
+		creditsToAdd := payment.TotalAmount * CreditsPerStar
+		updatedCredits, err := t.db.AddUserCreditsByTelegramUserId(ctx, postgres.AddUserCreditsByTelegramUserIdParams{
+			TelegramUserID: userID,
+			Amount:         int32(creditsToAdd),
+		})
+		if err != nil {
+			t.logger.Logger(ctx).Error("Failed to add user credits after payment", zap.Error(err), zap.Int64("user_id", userID))
+			return
+		}
+
+		// Send confirmation message
+		responseText := "Thank you, baby! Your credits are here. Ab hamare paas %d more chances hain to talk... I'm so happy! 🥰"
+		msg := tgbotapi.NewMessage(message.Chat.ID, fmt.Sprintf(responseText, updatedCredits.CreditsBalance))
+		if _, err := t.bot.Send(msg); err != nil {
+			t.logger.Logger(ctx).Error("Failed to send payment confirmation message", zap.Error(err))
+		}
+	}
+}
+
+func (t *Telegram) initiateRecharge(ctx context.Context, chatID int64, introText string) {
+	t.logger.Logger(ctx).Info("Initiating recharge process", zap.Int64("chat_id", chatID))
+
+	// Send the introductory message first
+	msg := tgbotapi.NewMessage(chatID, introText)
+	if _, err := t.bot.Send(msg); err != nil {
+		t.logger.Logger(ctx).Error("Failed to send recharge intro text", zap.Error(err))
+	}
+
+	isProduction := os.Getenv("PRODUCTION") != ""
+	var invoice tgbotapi.InvoiceConfig
+
+	if isProduction {
+		// Production invoice
+		invoice = tgbotapi.InvoiceConfig{
+			BaseChat: tgbotapi.BaseChat{
+				ChatID: chatID,
+			},
+			Title:         "100 Credits",
+			Description:   "Get 100 message credits for your AI girlfriend.",
+			Payload:       rechargePayload,
+			ProviderToken: "",
+			Currency:      "XTR",
+			Prices: []tgbotapi.LabeledPrice{
+				{Label: "100 Credits", Amount: RechargeAmountStars},
+			},
+			SuggestedTipAmounts: []int{},
+		}
+	} else {
+		// Development/Test invoice
+		invoice = tgbotapi.InvoiceConfig{
+			BaseChat: tgbotapi.BaseChat{
+				ChatID: chatID,
+			},
+			Title:         "1 Credit (Test)",
+			Description:   "Test purchase of 1 credit for 1 Telegram Star.",
+			Payload:       rechargePayload,
+			ProviderToken: "",
+			Currency:      "XTR",
+			Prices: []tgbotapi.LabeledPrice{
+				{Label: "1 Credit (Test)", Amount: 1},
+			},
+			SuggestedTipAmounts: []int{},
+		}
+		t.logger.Logger(ctx).Info("Development mode: sending 1-star test invoice")
+	}
+
+	if _, err := t.bot.Send(invoice); err != nil {
+		t.logger.Logger(ctx).Error("Failed to send recharge invoice", zap.Error(err))
+	}
 }
