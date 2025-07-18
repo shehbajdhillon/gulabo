@@ -88,7 +88,7 @@ func (c *Cartesia) GenerateSpeech(ctx context.Context, text string) ([]byte, err
 		Transcript: text,
 		Voice: VoiceConfig{
 			Mode: "id",
-			ID:   INDIAN_WOMAN,
+			ID:   HINGLISH_WOMAN,
 		},
 		OutputFormat: OutputFormat{
 			Container:  "mp3",
