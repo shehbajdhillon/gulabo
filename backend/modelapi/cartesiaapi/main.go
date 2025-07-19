@@ -8,6 +8,7 @@ import (
 	"gulabodev/httpmiddleware"
 	"gulabodev/logger"
 	"os"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -63,10 +64,16 @@ func Connect(ctx context.Context, args CartesiaConnectProps) *Cartesia {
 	return &Cartesia{logger: args.Logger, semaphore: sem}
 }
 
+func (c *Cartesia) removeEmphasisForTTS(text string) string {
+	return strings.ReplaceAll(text, "*", "")
+}
+
 func (c *Cartesia) GenerateSpeech(ctx context.Context, text string) ([]byte, error) {
 	tracer := otel.Tracer("cartesiaapi/GenerateSpeech")
 	ctx, span := tracer.Start(ctx, "GenerateSpeech")
 	defer span.End()
+
+	text = c.removeEmphasisForTTS(text)
 
 	logger := c.logger.Logger(ctx)
 
@@ -88,14 +95,14 @@ func (c *Cartesia) GenerateSpeech(ctx context.Context, text string) ([]byte, err
 		Transcript: text,
 		Voice: VoiceConfig{
 			Mode: "id",
-			ID:   HINGLISH_WOMAN,
+			ID:   WOMAN_TEST_3,
 		},
 		OutputFormat: OutputFormat{
 			Container:  "mp3",
 			BitRate:    128000,
 			SampleRate: 44100,
 		},
-		Language: "hi",
+		Language: "en",
 	}
 
 	jsonData, err := json.Marshal(request)
