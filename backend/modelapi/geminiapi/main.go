@@ -286,7 +286,7 @@ func (g *Gemini) GenerateSpeech(ctx context.Context, inputText string) ([]byte, 
 			SpeechConfig: &genai.SpeechConfig{
 				VoiceConfig: &genai.VoiceConfig{
 					PrebuiltVoiceConfig: &genai.PrebuiltVoiceConfig{
-						VoiceName: "Leda",
+						VoiceName: "Aoede",
 					},
 				},
 			},
