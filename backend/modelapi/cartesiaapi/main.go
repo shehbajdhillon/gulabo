@@ -37,7 +37,7 @@ type VoiceConfig struct {
 
 type OutputFormat struct {
 	Container  string `json:"container"`
-	BitRate    int    `json:"bit_rate"`
+	BitRate    int    `json:"bit_rate,omit_empty"`
 	Encoding   string `json:"encoding,omit_empty"`
 	SampleRate int    `json:"sample_rate"`
 }
@@ -91,9 +91,9 @@ func (c *Cartesia) GenerateSpeech(ctx context.Context, text string) ([]byte, err
 			ID:   HINGLISH_WOMAN,
 		},
 		OutputFormat: OutputFormat{
-			Container:  "mp3",
-			BitRate:    128000,
-			SampleRate: 44100,
+			Container:  "wav",
+			Encoding:   "pcm_s16le",
+			SampleRate: 48000,
 		},
 		Language: "hi",
 	}

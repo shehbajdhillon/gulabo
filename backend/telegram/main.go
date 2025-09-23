@@ -446,7 +446,7 @@ func (t *Telegram) sendVoiceResponse(ctx context.Context, chatID int64, userID i
 	} else {
 		// Send voice message
 		voice := tgbotapi.NewVoice(chatID, tgbotapi.FileBytes{
-			Name:  "response.mp3",
+			Name:  "response.wav",
 			Bytes: audioData,
 		})
 		_, err = t.bot.Send(voice)
