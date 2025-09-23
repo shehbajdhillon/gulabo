@@ -2,48 +2,20 @@ package geminiapi
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"gulabodev/logger"
 	"os"
-	"strings"
 	"time"
 
-	"github.com/google/generative-ai-go/genai"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
-	"google.golang.org/api/option"
+	"google.golang.org/genai"
 )
 
 const (
-	GEMINI_MODEL_NAME = "gemini-2.0-flash"
+	GEMINI_MODEL_NAME = "gemini-2.5-flash"
 )
-
-type ConversationResponse struct {
-	// The AI's verbal response to the user
-	Response string `json:"response"`
-	// The AI's non-verbal cues and body language
-	BodyLanguage string `json:"bodyLanguage"`
-	// Analysis of the conversation
-	Analysis ConversationAnalysis `json:"analysis"`
-}
-
-type ConversationAnalysis struct {
-	EscalationScore int    `json:"escalationScore"` // 0-100
-	VibeCheck       string `json:"vibeCheck"`       // Current emotional state with emoji
-	NextMove        struct {
-		ExampleLine string `json:"exampleLine"` // Exact words to use
-	} `json:"nextMove"`
-	Progress struct {
-		CurrentStage string `json:"currentStage"` // Opening/Building Rapport/Creating Attraction/Making Plans
-		NextStage    string `json:"nextStage"`    // Where to go next
-	} `json:"progress"`
-	Why struct {
-		ScoreBreakdown string `json:"scoreBreakdown"` // Conversational coaching message
-	} `json:"why"`
-}
 
 type GeminiConnectProps struct {
 	Logger *logger.LogMiddleware
@@ -59,31 +31,6 @@ type Gemini struct {
 	client *genai.Client
 }
 
-// Progress insights structure
-type ProgressInsights struct {
-	MotivationalSummary  string   `json:"motivationalSummary"`
-	TopMistakes          []string `json:"topMistakes"`
-	SuccessPatterns      []string `json:"successPatterns"`
-	NextSkillFocus       string   `json:"nextSkillFocus"`
-	ImprovementPlan      string   `json:"improvementPlan"`
-	TimelineExpectation  string   `json:"timelineExpectation"`
-	RecommendedScenarios []string `json:"recommendedScenarios"`
-}
-
-// Skill analysis structure
-type SkillAnalysis struct {
-	OpeningSkill      int            `json:"openingSkill"`
-	RapportSkill      int            `json:"rapportSkill"`
-	AttractionSkill   int            `json:"attractionSkill"`
-	EscalationSkill   int            `json:"escalationSkill"`
-	ScenarioStrengths map[string]int `json:"scenarioStrengths"`
-	ImprovementRate   string         `json:"improvementRate"`
-}
-
-type LearningPlan struct {
-	// TODO: Define LearningPlan structure
-}
-
 func exponentialBackoff(attempt int) time.Duration {
 	tracer := otel.Tracer("geminiapi/exponentialBackoff")
 	_, span := tracer.Start(context.Background(), "exponentialBackoff")
@@ -97,7 +44,7 @@ func Connect(ctx context.Context, args GeminiConnectProps) *Gemini {
 	tracer := otel.Tracer("geminiapi/Connect")
 	ctx, span := tracer.Start(ctx, "Connect")
 	defer span.End()
-	args.Logger.Logger(ctx).Info("Connecting Gemini API client")
+	args.Logger.Logger(ctx).Info("[GeminiAPI] Connecting Gemini API client")
 
 	maxWorkers := 200
 
@@ -105,7 +52,10 @@ func Connect(ctx context.Context, args GeminiConnectProps) *Gemini {
 
 	GEMINI_KEY := os.Getenv("GEMINI_SECRET_KEY")
 
-	client, err := genai.NewClient(ctx, option.WithAPIKey(GEMINI_KEY))
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:  GEMINI_KEY,
+		Backend: genai.BackendGeminiAPI,
+	})
 	if err != nil {
 		args.Logger.Logger(ctx).Error("[GeminiAPI] Could not create Gemini client")
 		os.Exit(21)
@@ -114,57 +64,68 @@ func Connect(ctx context.Context, args GeminiConnectProps) *Gemini {
 	return &Gemini{logger: args.Logger, client: client}
 }
 
-func (g *Gemini) generateContentWithRetry(ctx context.Context, model *genai.GenerativeModel, prompt string) (*genai.GenerateContentResponse, error) {
+func (g *Gemini) generateContentWithRetry(ctx context.Context, userPrompt string, systemPrompt string, tools []*genai.Tool, toolConfig *genai.ToolConfig) (*genai.GenerateContentResponse, error) {
 	tracer := otel.Tracer("geminiapi/generateContentWithRetry")
 	ctx, span := tracer.Start(ctx, "generateContentWithRetry")
 	defer span.End()
-	g.logger.Logger(ctx).Info("generateContentWithRetry called", zap.Int("prompt.length", len(prompt)))
+	g.logger.Logger(ctx).Info("[GeminiAPI] generateContentWithRetry called", zap.Int("prompt.length", len(userPrompt)))
 
 	var resp *genai.GenerateContentResponse
 	var err error
 
-	model.SafetySettings = []*genai.SafetySetting{
+	thinkingBudget := int32(0)
+
+	safetySettings := []*genai.SafetySetting{
 		{
 			Category:  genai.HarmCategoryHarassment,
-			Threshold: genai.HarmBlockOnlyHigh,
+			Threshold: genai.HarmBlockThresholdBlockNone,
 		},
 		{
 			Category:  genai.HarmCategoryHateSpeech,
-			Threshold: genai.HarmBlockOnlyHigh,
+			Threshold: genai.HarmBlockThresholdBlockNone,
 		},
 		{
 			Category:  genai.HarmCategorySexuallyExplicit,
-			Threshold: genai.HarmBlockOnlyHigh,
+			Threshold: genai.HarmBlockThresholdBlockNone,
 		},
 		{
 			Category:  genai.HarmCategoryDangerousContent,
-			Threshold: genai.HarmBlockOnlyHigh,
+			Threshold: genai.HarmBlockThresholdBlockNone,
 		},
 	}
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		span.AddEvent("Attempt", trace.WithAttributes(attribute.Int("attemptNumber", attempt+1)))
-		g.logger.Logger(ctx).Info("Gemini LLM generation attempt", zap.Int("attempt", attempt+1))
+		g.logger.Logger(ctx).Info("[GeminiAPI] LLM generation attempt", zap.Int("attempt", attempt+1))
 		span.AddEvent("Attempt", trace.WithAttributes(attribute.Int("attemptNumber", attempt+1)))
 
-		resp, err = model.GenerateContent(ctx, genai.Text(prompt))
+		resp, err = g.client.Models.GenerateContent(ctx, GEMINI_MODEL_NAME, genai.Text(userPrompt), &genai.GenerateContentConfig{
+			SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: systemPrompt}}},
+			SafetySettings:    safetySettings,
+			ToolConfig:        toolConfig,
+			Tools:             tools,
+			ThinkingConfig: &genai.ThinkingConfig{
+				IncludeThoughts: false,
+				ThinkingBudget:  &thinkingBudget,
+			},
+		})
 
 		if err != nil || resp == nil || len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
 			if err != nil {
 				span.RecordError(err)
-				g.logger.Logger(ctx).Error("Error generating LLM content", zap.Error(err), zap.Int("attempt", attempt+1))
+				g.logger.Logger(ctx).Error("[GeminiAPI] Error generating LLM content", zap.Error(err), zap.Int("attempt", attempt+1))
 			} else {
-				g.logger.Logger(ctx).Warn("Received empty or invalid LLM response", zap.Int("attempt", attempt+1))
+				g.logger.Logger(ctx).Warn("[GeminiAPI] Received empty or invalid LLM response", zap.Int("attempt", attempt+1))
 				span.AddEvent("EmptyResponse")
 			}
 			if err != nil {
-				g.logger.Logger(ctx).Warn("Error generating LLM content, retrying...",
+				g.logger.Logger(ctx).Warn("[GeminiAPI] Error generating LLM content, retrying...",
 					zap.Error(err),
 					zap.Int("attempt", attempt+1),
 					zap.Int("maxRetries", maxRetries))
 				span.RecordError(err)
 			} else {
-				g.logger.Logger(ctx).Warn("Received empty or invalid response, retrying...",
+				g.logger.Logger(ctx).Warn("[GeminiAPI] Received empty or invalid response, retrying...",
 					zap.Int("attempt", attempt+1),
 					zap.Int("maxRetries", maxRetries))
 				span.AddEvent("EmptyResponse")
@@ -188,228 +149,12 @@ func (g *Gemini) generateContentWithRetry(ctx context.Context, model *genai.Gene
 
 	// Final error check after all retries
 	if err != nil {
-		g.logger.Logger(ctx).Error("Final error generating LLM content after retries:", zap.Error(err))
+		g.logger.Logger(ctx).Error("[GeminiAPI] Final error generating LLM content after retries:", zap.Error(err))
 		return nil, err
 	}
 
 	span.AddEvent("LLM generation successful")
 	return resp, nil
-}
-
-func (g *Gemini) GenerateWomanResponse(ctx context.Context, transcript string) (string, string, error) {
-	tracer := otel.Tracer("geminiapi/GenerateWomanResponse")
-	ctx, span := tracer.Start(ctx, "GenerateWomanResponse")
-	defer span.End()
-	g.logger.Logger(ctx).Info("GenerateWomanResponse called", zap.Int("transcript.length", len(transcript)))
-
-	logger := g.logger.Logger(ctx)
-
-	// Create the system prompt focused only on response generation
-	systemPrompt := `You are roleplaying as a woman in a dating/flirting scenario. Your role is to:
-1. Provide natural, realistic responses as a woman being approached
-2. Generate very concise body language descriptions with matching emojis
-3. Maintain consistent personality and interest level
-4. React authentically to the man's conversation attempts
-
-For each response, provide TWO separate outputs:
-1. A natural verbal response that fits the context (no body language descriptions included)
-2. A super brief body language description with emojis (4-5 words maximum + relevant emojis)
-
-Guidelines for body language descriptions:
-- Use short, punchy phrases with 1-2 relevant emojis (e.g., "Smiles, plays with hair 😊✨")
-- Focus on the most important non-verbal cue
-- No complete sentences or complex descriptions
-- Maximum 4-5 words + emojis
-- Use emojis that match the emotional state:
-  * Positive/Interested: 😊 ☺️ 😏 ✨ 💫
-  * Neutral/Unsure: 🤔 😐 🫤
-  * Negative/Disinterested: 🙄 😒 💅
-
-Remember:
-- Stay in character as the woman
-- Respond naturally to the current context
-- Show realistic interest levels based on the interaction
-- Keep verbal response and body language descriptions completely separate`
-
-	// Create a model for response generation
-	model := g.client.GenerativeModel(GEMINI_MODEL_NAME)
-	model.SystemInstruction = &genai.Content{
-		Parts: []genai.Part{genai.Text(systemPrompt)},
-	}
-	model.Tools = []*genai.Tool{g.GetResponseOnlyFunction()}
-	model.ToolConfig = &genai.ToolConfig{
-		FunctionCallingConfig: &genai.FunctionCallingConfig{
-			Mode:                 genai.FunctionCallingAny,
-			AllowedFunctionNames: []string{"generate_woman_response"},
-		},
-	}
-
-	// Generate content with retry
-	response, err := g.generateContentWithRetry(ctx, model, transcript)
-	if err != nil {
-		logger.Error("Failed to generate woman's response",
-			zap.Error(err),
-			zap.String("transcript", transcript))
-		return "", "", fmt.Errorf("failed to generate response: %w", err)
-	}
-
-	functionCall, ok := response.Candidates[0].Content.Parts[0].(genai.FunctionCall)
-	if !ok {
-		return "", "", fmt.Errorf("expected FunctionCall, got %T", response.Candidates[0].Content.Parts[0])
-	}
-
-	var result struct {
-		Response     string `json:"response"`
-		BodyLanguage string `json:"bodyLanguage"`
-	}
-
-	data, err := json.Marshal(functionCall.Args)
-	if err != nil {
-		span.RecordError(err)
-		g.logger.Logger(ctx).Error("Gemini LLM error in GenerateWomanResponse", zap.Error(err))
-		return "", "", err
-	}
-
-	if err := json.Unmarshal(data, &result); err != nil {
-		span.RecordError(err)
-		g.logger.Logger(ctx).Error("Gemini LLM error in GenerateWomanResponse", zap.Error(err))
-		return "", "", err
-	}
-
-	span.AddEvent("GenerateWomanResponse success")
-	return result.Response, result.BodyLanguage, nil
-}
-
-func (g *Gemini) AnalyzeInteraction(ctx context.Context, prompt string) (*ConversationAnalysis, error) {
-	tracer := otel.Tracer("geminiapi/AnalyzeInteraction")
-	ctx, span := tracer.Start(ctx, "AnalyzeInteraction")
-	defer span.End()
-	g.logger.Logger(ctx).Info("AnalyzeInteraction called", zap.Int("prompt.length", len(prompt)), zap.String("prompt", prompt))
-
-	logger := g.logger.Logger(ctx)
-
-	// Create the system prompt focused only on analysis
-	systemPrompt := `You are an AI dating coach helping men learn to escalate conversations toward romantic connection. Your role is to:
-
-1. Score their progress toward escalation (0-100):
-   - 0-30: Just Friendly (no romantic tension)
-   - 31-60: Building Interest (some attraction building)
-   - 61-80: Clear Chemistry (mutual interest evident)
-   - 81-100: Ready to Connect (natural next step opportunity)
-
-2. Analyze the interaction with a focus on romantic escalation:
-   - Did they move the conversation forward romantically?
-   - Are they creating attraction or just being friendly?
-   - What opportunities did they miss or capitalize on?
-
-3. Provide direct, personalized feedback using "you" language:
-   - Always address the user as "you"
-   - Be specific about what they did and should do next
-   - Give exact words they can use to escalate appropriately
-
-4. Focus on one clear next action to build attraction:
-   - Don't overwhelm with multiple suggestions
-   - Provide specific example lines that escalate
-   - Explain why this move will work for their situation
-
-Remember:
-- The goal is romantic escalation, not just friendly conversation
-- Always find something positive they did (build confidence)
-- Be direct but encouraging in your coaching
-- Use casual, conversational language
-- Focus on creating emotional connection, not logical conversation`
-
-	// Create a model for analysis
-	model := g.client.GenerativeModel(GEMINI_MODEL_NAME)
-	model.SystemInstruction = &genai.Content{
-		Parts: []genai.Part{genai.Text(systemPrompt)},
-	}
-	model.Tools = []*genai.Tool{g.GetAnalysisOnlyFunction()}
-	model.ToolConfig = &genai.ToolConfig{
-		FunctionCallingConfig: &genai.FunctionCallingConfig{
-			Mode:                 genai.FunctionCallingAny,
-			AllowedFunctionNames: []string{"analyze_interaction"},
-		},
-	}
-
-	// Generate content with retry
-	response, err := g.generateContentWithRetry(ctx, model, prompt)
-	if err != nil {
-		logger.Error("Failed to generate analysis",
-			zap.Error(err))
-		return nil, fmt.Errorf("failed to generate analysis: %w", err)
-	}
-
-	functionCall, ok := response.Candidates[0].Content.Parts[0].(genai.FunctionCall)
-	if !ok {
-		logger.Error("Invalid response format",
-			zap.String("type", fmt.Sprintf("%T", response.Candidates[0].Content.Parts[0])),
-			zap.Any("response", response.Candidates[0].Content.Parts[0]))
-		return nil, fmt.Errorf("expected FunctionCall, got %T", response.Candidates[0].Content.Parts[0])
-	}
-
-	// Log the raw function call for debugging
-	logger.Debug("Raw function call",
-		zap.String("name", functionCall.Name),
-		zap.Any("args", functionCall.Args))
-
-	data, err := json.Marshal(functionCall.Args)
-	if err != nil {
-		logger.Error("Failed to marshal function args",
-			zap.Error(err),
-			zap.Any("args", functionCall.Args))
-		return nil, fmt.Errorf("failed to marshal function args: %w", err)
-	}
-
-	var analysis ConversationAnalysis
-	if err := json.Unmarshal(data, &analysis); err != nil {
-		// Log the raw data for debugging
-		logger.Error("Failed to unmarshal analysis",
-			zap.Error(err),
-			zap.String("raw_data", string(data)))
-		return nil, fmt.Errorf("failed to unmarshal analysis: %w", err)
-	}
-
-	// Validate the analysis
-	if err := g.validateAnalysis(&analysis); err != nil {
-		logger.Error("Invalid analysis data",
-			zap.Error(err),
-			zap.Any("analysis", analysis))
-		return nil, fmt.Errorf("invalid analysis data: %w", err)
-	}
-
-	span.AddEvent("AnalyzeInteraction success")
-
-	analysis.NextMove.ExampleLine = strings.Trim(analysis.NextMove.ExampleLine, `\"`)
-	analysis.NextMove.ExampleLine = strings.Trim(analysis.NextMove.ExampleLine, `\'`)
-	analysis.NextMove.ExampleLine = strings.Trim(analysis.NextMove.ExampleLine, `"`)
-	analysis.NextMove.ExampleLine = strings.Trim(analysis.NextMove.ExampleLine, `'`)
-
-	g.logger.Logger(ctx).Info("Next Line", zap.String("Next Line", analysis.NextMove.ExampleLine))
-
-	return &analysis, nil
-}
-
-func (g *Gemini) validateAnalysis(analysis *ConversationAnalysis) error {
-	if analysis.EscalationScore < 0 || analysis.EscalationScore > 100 {
-		return fmt.Errorf("escalation score must be between 0 and 100")
-	}
-	if analysis.VibeCheck == "" {
-		return fmt.Errorf("missing vibe check")
-	}
-	if analysis.NextMove.ExampleLine == "" {
-		return fmt.Errorf("missing next move example line")
-	}
-	if analysis.Progress.CurrentStage == "" {
-		return fmt.Errorf("missing current stage")
-	}
-	if analysis.Progress.NextStage == "" {
-		return fmt.Errorf("missing next stage")
-	}
-	if analysis.Why.ScoreBreakdown == "" {
-		return fmt.Errorf("missing score breakdown")
-	}
-	return nil
 }
 
 func (g *Gemini) GetResponseOnlyFunction() *genai.Tool {
@@ -455,8 +200,11 @@ func (g *Gemini) GetAnalysisOnlyFunction() *genai.Tool {
 						Type: genai.TypeObject,
 						Properties: map[string]*genai.Schema{
 							"exampleLine": {
-								Type:        genai.TypeString,
-								Description: "1-2 sentences. Exact words to use, showing how to escalate appropriately. Example: 'I have to admit, anyone who reads Murakami automatically becomes more intriguing to me'",
+								Type: genai.TypeArray,
+								Items: &genai.Schema{
+									Type: genai.TypeString,
+								},
+								Description: "Array of 2-3 example lines. Exact words to use, showing how to escalate appropriately. Each should be sophisticated and natural. Example: ['I have to admit, anyone who reads Murakami automatically becomes more intriguing to me', 'There's something about the way you think that I find compelling', 'You have this perspective that makes me want to know more about you']. If the user's name is provided you can use it instead of a placeholder only when needed and not all the time.",
 							},
 						},
 						Required: []string{"exampleLine"},
@@ -466,24 +214,35 @@ func (g *Gemini) GetAnalysisOnlyFunction() *genai.Tool {
 						Properties: map[string]*genai.Schema{
 							"currentStage": {
 								Type:        genai.TypeString,
-								Description: "Current stage in the escalation journey. Must be one of: 'Opening', 'Building Rapport', 'Creating Attraction', 'Making Plans'",
-							},
-							"nextStage": {
-								Type:        genai.TypeString,
-								Description: "Next stage to work toward. Must be one of: 'Opening', 'Building Rapport', 'Creating Attraction', 'Making Plans'",
+								Description: "REQUIRED: Current stage in the escalation journey. STAGES PROGRESS IN ORDER: 1.Approach → 2.Opening → 3.Building Rapport → 4.Creating Attraction → 5.Making Plans. Must be EXACTLY one of these five values: 'Approach', 'Opening', 'Building Rapport', 'Creating Attraction', 'Making Plans'. Use the exact spelling and capitalization shown. Focus on where they are RIGHT NOW in the conversation. If conversation is derailed or offensive, reset to 'Approach'. First conversation turn should be 'Approach'.",
+								Enum:        []string{"Approach", "Opening", "Building Rapport", "Creating Attraction", "Making Plans"},
 							},
 						},
-						Required: []string{"currentStage", "nextStage"},
+						Required: []string{"currentStage"},
 					},
 					"why": {
 						Type: genai.TypeObject,
 						Properties: map[string]*genai.Schema{
-							"scoreBreakdown": {
+							"analysis": {
 								Type:        genai.TypeString,
-								Description: "4-5 sentence conversational coaching message that flows naturally like a dating coach speaking directly to you. Combine what happened in this interaction, what to do next, why this strategy works, and encouragement. Use natural transitions and coaching language. Structure: 1) What happened (specific moment that shifted dynamic), 2) What to do next (clear action guidance), 3) Why this works (strategic reasoning), 4) Encouragement/confidence building. Example: 'You created a real connection when you shared that personal story - I could see her opening up right after. Now's the perfect time to add some playful teasing to build attraction. This works because you've already built good rapport, so light teasing will create those emotional spikes while keeping things fun. You're doing great - keep building that chemistry!' or 'You lost momentum by talking over her, but you recovered nicely with that genuine question. Now focus on creating moments instead of gathering information - ask about her passions, not her job. This approach works because it shifts from logical to emotional connection, which is where attraction happens. You've got the awareness to catch yourself - that's huge progress!' or 'You played it safe by asking about her drink, which kept the conversation going but didn't create any spark. Time to take a risk and show some personality - make a playful observation about her instead. This works because women are drawn to confidence and authenticity, not generic small talk. You're being too cautious - trust yourself to be more interesting!' or 'You came on too strong with that comment about her looks - I could see her pulling back a bit. Let's rebuild the connection by asking about something she mentioned earlier, then escalate more gradually. This approach works because it shows you're actually listening and builds comfort before attraction. You're learning to read the room - that's exactly what good flirting requires!'",
+								Description: "ONE concise sentence analyzing the key moment that impacted the dynamic. Be specific and punchy. Examples: Good case: 'You created real connection with that personal story - she opened up immediately.' | Neutral case: 'You kept conversation going but didn't create memorable spark.' | Bad case: 'You lost her attention by interrupting her story about her weekend.' | Recovery case: 'You came on too strong but recovered by asking about something she mentioned.'",
+							},
+							"nextAction": {
+								Type: genai.TypeArray,
+								Items: &genai.Schema{
+									Type: genai.TypeString,
+								},
+								Description: "Array of 2-3 specific, actionable steps to take next. Each item should be a clear, tactical action (not a full sentence). Examples: Good progression: ['Add playful teasing to build attraction', 'Make a fun observation about her personality', 'Create emotional spikes while keeping it light'] | Neutral to engaging: ['Take a risk and show some personality', 'Make a playful comment about her environment', 'Stop playing it safe with generic questions'] | Recovery mode: ['Ask about something she mentioned earlier', 'Rebuild connection before escalating', 'Show you were actually listening'] | Momentum building: ['Ask about her passions instead of job details', 'Create emotional moments', 'Focus on feelings over facts']",
+							},
+							"reasoning": {
+								Type: genai.TypeArray,
+								Items: &genai.Schema{
+									Type: genai.TypeString,
+								},
+								Description: "Array of 2-3 strategic principles explaining why the approach works. Each should be a short phrase (3-5 words max). Examples: Building attraction: ['Builds on rapport', 'Creates emotional spikes', 'Keeps it playful'] | Emotional connection: ['Shifts to emotions', 'Bypasses logical mind', 'Drives real attraction'] | Confidence building: ['Shows authenticity', 'Demonstrates confidence', 'Avoids generic talk'] | Recovery strategy: ['Proves you listen', 'Rebuilds comfort first', 'Sets up next escalation']",
 							},
 						},
-						Required: []string{"scoreBreakdown"},
+						Required: []string{"analysis", "nextAction", "reasoning"},
 					},
 				},
 				Required: []string{"escalationScore", "vibeCheck", "nextMove", "progress", "why"},
@@ -559,6 +318,72 @@ func (g *Gemini) GetScenarioGenerationFunction() *genai.Tool {
 					},
 				},
 				Required: []string{"title", "description", "difficultyLevel", "tags", "location"},
+			},
+		}},
+	}
+}
+
+func (g *Gemini) GetProgressInsightsFunction() *genai.Tool {
+	return &genai.Tool{
+		FunctionDeclarations: []*genai.FunctionDeclaration{{
+			Name:        "generate_progress_insights",
+			Description: "Generate personalized coaching insights based on user's conversation practice data",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"motivationalSummary": {
+						Type:        genai.TypeString,
+						Description: "One punchy, encouraging sentence (max 15 words) highlighting their biggest win or momentum. Use 'you' language.",
+					},
+					"topMistakes": {
+						Type: genai.TypeArray,
+						Items: &genai.Schema{
+							Type: genai.TypeString,
+						},
+						Description: "3 specific mistakes as SHORT phrases (max 8 words each). Examples: 'Talking over her responses', 'Using generic compliments', 'Avoiding personal topics'",
+					},
+					"successPatterns": {
+						Type: genai.TypeArray,
+						Items: &genai.Schema{
+							Type: genai.TypeString,
+						},
+						Description: "3 specific strengths as SHORT phrases (max 8 words each). Examples: 'Great at reading body language', 'Consistent practice schedule', 'Strong opening conversations'",
+					},
+					"nextSkillFocus": {
+						Type:        genai.TypeString,
+						Description: "One clear, specific skill (max 10 words). Examples: 'Building rapport through personal stories', 'Creating attraction with playful teasing'",
+					},
+					"improvementPlan": {
+						Type: genai.TypeArray,
+						Items: &genai.Schema{
+							Type: genai.TypeString,
+						},
+						Description: "3 numbered action steps, each max 10 words. Focus on what to DO, not explanations. Examples: 'Practice 3 coffee shop scenarios this week', 'Ask follow-up questions after she speaks'",
+					},
+					"timelineExpectation": {
+						Type:        genai.TypeString,
+						Description: "Realistic timeline in one sentence (max 12 words). Examples: 'See improvement in 2-3 weeks with consistent practice', 'Expect breakthrough after 10 more conversations'",
+					},
+					"recommendedScenarios": {
+						Type: genai.TypeArray,
+						Items: &genai.Schema{
+							Type: genai.TypeString,
+						},
+						Description: "3 specific scenario names (max 5 words each). Examples: 'Coffee Shop Approach', 'Fitness Class Social', 'Bookstore Browse'",
+					},
+					"quickWins": {
+						Type: genai.TypeArray,
+						Items: &genai.Schema{
+							Type: genai.TypeString,
+						},
+						Description: "2-3 immediate actions they can take today (5-8 words each). Examples: 'Make eye contact when she speaks', 'Share one personal story', 'Ask about her interests'",
+					},
+					"weeklyFocus": {
+						Type:        genai.TypeString,
+						Description: "This week's main focus area (max 6 words). Examples: 'Building rapport skills', 'Creating attraction techniques', 'Opening conversations'",
+					},
+				},
+				Required: []string{"motivationalSummary", "topMistakes", "successPatterns", "nextSkillFocus", "improvementPlan", "timelineExpectation", "recommendedScenarios", "quickWins", "weeklyFocus"},
 			},
 		}},
 	}
