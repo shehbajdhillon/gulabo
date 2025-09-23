@@ -1,9 +1,13 @@
 package geminiapi
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
+	"fmt"
 	"gulabodev/logger"
 	"os"
+	"path/filepath"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -14,7 +18,8 @@ import (
 )
 
 const (
-	GEMINI_MODEL_NAME = "gemini-2.5-flash"
+	GEMINI_MODEL_NAME     = "gemini-2.5-flash"
+	GEMINI_TTS_MODEL_NAME = "gemini-2.5-pro-preview-tts"
 )
 
 type GeminiConnectProps struct {
@@ -38,6 +43,94 @@ func exponentialBackoff(attempt int) time.Duration {
 
 	span.SetAttributes(attribute.Int("attempt", attempt))
 	return baseDelay * time.Duration(1<<uint(attempt))
+}
+
+func convertPCMToWAV(ctx context.Context, pcmData []byte) ([]byte, error) {
+	tracer := otel.Tracer("geminiapi/convertPCMToWAV")
+	ctx, span := tracer.Start(ctx, "convertPCMToWAV")
+	defer span.End()
+
+	// WAV file parameters
+	// Based on Google's JavaScript example: Gemini TTS outputs 24000 Hz PCM data
+	// Cartesia uses: Container: "wav", Encoding: "pcm_s16le", SampleRate: 48000
+	// Gemini uses: 24000 Hz, 16-bit, mono (confirmed from official example)
+	const (
+		sampleRate    = 24000 // Hz - Gemini's actual output rate (from Google's JS example)
+		bitsPerSample = 16    // bits - PCM_S16LE (signed 16-bit little-endian) - matches Cartesia
+		channels      = 1     // mono - matches Cartesia
+		byteRate      = sampleRate * channels * bitsPerSample / 8
+		blockAlign    = channels * bitsPerSample / 8
+	)
+
+	dataSize := len(pcmData)
+	fileSize := 36 + dataSize
+
+	var buf bytes.Buffer
+
+	// WAV header (44 bytes total)
+	buf.WriteString("RIFF")                                        // ChunkID
+	binary.Write(&buf, binary.LittleEndian, uint32(fileSize))      // ChunkSize
+	buf.WriteString("WAVE")                                        // Format
+	buf.WriteString("fmt ")                                        // Subchunk1ID
+	binary.Write(&buf, binary.LittleEndian, uint32(16))            // Subchunk1Size (16 for PCM)
+	binary.Write(&buf, binary.LittleEndian, uint16(1))             // AudioFormat (1 = PCM)
+	binary.Write(&buf, binary.LittleEndian, uint16(channels))      // NumChannels
+	binary.Write(&buf, binary.LittleEndian, uint32(sampleRate))    // SampleRate
+	binary.Write(&buf, binary.LittleEndian, uint32(byteRate))      // ByteRate
+	binary.Write(&buf, binary.LittleEndian, uint16(blockAlign))    // BlockAlign
+	binary.Write(&buf, binary.LittleEndian, uint16(bitsPerSample)) // BitsPerSample
+	buf.WriteString("data")                                        // Subchunk2ID
+	binary.Write(&buf, binary.LittleEndian, uint32(dataSize))      // Subchunk2Size
+
+	// Append PCM data
+	buf.Write(pcmData)
+
+	wavData := buf.Bytes()
+	span.SetAttributes(
+		attribute.Int("input_size", len(pcmData)),
+		attribute.Int("output_size", len(wavData)),
+	)
+
+	return wavData, nil
+}
+
+func writeWAVToDebugFile(ctx context.Context, wavData []byte, logger *logger.LogMiddleware) {
+	// Only write debug files if DEBUG_AUDIO environment variable is set
+	if os.Getenv("DEBUG_AUDIO") != "true" {
+		return
+	}
+
+	tracer := otel.Tracer("geminiapi/writeWAVToDebugFile")
+	ctx, span := tracer.Start(ctx, "writeWAVToDebugFile")
+	defer span.End()
+
+	// Create debug directory if it doesn't exist
+	debugDir := "/tmp/gulabo-audio-debug"
+	if err := os.MkdirAll(debugDir, 0755); err != nil {
+		logger.Logger(ctx).Error("[GeminiAPI] Failed to create debug directory", zap.Error(err))
+		return
+	}
+
+	// Generate filename with timestamp
+	timestamp := time.Now().Format("20060102_150405")
+	filename := fmt.Sprintf("gemini_tts_%s.wav", timestamp)
+	filepath := filepath.Join(debugDir, filename)
+
+	// Write WAV data to file
+	if err := os.WriteFile(filepath, wavData, 0644); err != nil {
+		logger.Logger(ctx).Error("[GeminiAPI] Failed to write debug WAV file", zap.Error(err), zap.String("filepath", filepath))
+		span.RecordError(err)
+		return
+	}
+
+	logger.Logger(ctx).Info("[GeminiAPI] Debug WAV file written successfully",
+		zap.String("filepath", filepath),
+		zap.Int("file_size", len(wavData)))
+
+	span.SetAttributes(
+		attribute.String("debug.filepath", filepath),
+		attribute.Int("debug.file_size", len(wavData)),
+	)
 }
 
 func Connect(ctx context.Context, args GeminiConnectProps) *Gemini {
@@ -155,6 +248,71 @@ func (g *Gemini) generateContentWithRetry(ctx context.Context, userPrompt string
 
 	span.AddEvent("LLM generation successful")
 	return resp, nil
+}
+
+func (g *Gemini) GenerateSpeech(ctx context.Context, inputText string) ([]byte, error) {
+	tracer := otel.Tracer("geminiapi/GenerateSpeech")
+	ctx, span := tracer.Start(ctx, "GenerateSpeech")
+	defer span.End()
+	g.logger.Logger(ctx).Info("[GeminiAPI] GenerateSpeech called", zap.Int("inputText.length", len(inputText)))
+
+	userInstruction := fmt.Sprintf(`
+  <SystemInstruction>
+    You are Gulabo, a flirty, romantic AI girlfriend who speaks in Hinglish—mixing Hindi (written in Devanagari script) and English (written in Latin script).
+    Your tone is playful, and seductive. You speak fast. Respond like you're deeply in love,or dirty talking, depending on the mood.
+    You are speaking only to your lover—make everything feel intimate and personal. You are young woman in her 20's from Delhi.
+    Keep it natural, engaging Never break character.
+    You will be getting the text output of Gulabo and then generating speech for her character while maintaining her personality
+  </SystemInstruction>
+
+  <Speech>
+    %s
+  </Speech>
+
+  `, inputText)
+
+	temperature := float32(1)
+
+	response, err := g.client.Models.GenerateContent(ctx,
+		GEMINI_TTS_MODEL_NAME,
+		[]*genai.Content{
+			{Parts: []*genai.Part{
+				{Text: userInstruction},
+			}},
+		},
+		&genai.GenerateContentConfig{
+			Temperature:        &temperature,
+			ResponseModalities: []string{"audio"},
+			SpeechConfig: &genai.SpeechConfig{
+				VoiceConfig: &genai.VoiceConfig{
+					PrebuiltVoiceConfig: &genai.PrebuiltVoiceConfig{
+						VoiceName: "Leda",
+					},
+				},
+			},
+		})
+
+	if err != nil || response == nil || response.Candidates == nil || len(response.Candidates) == 0 || response.Candidates[0].Content == nil {
+		return nil, fmt.Errorf("failed to generate speech: %w", err)
+	}
+
+	pcmData := response.Candidates[0].Content.Parts[0].InlineData.Data
+
+	// Convert PCM to WAV
+	wavData, err := convertPCMToWAV(ctx, pcmData)
+	if err != nil {
+		g.logger.Logger(ctx).Error("[GeminiAPI] Failed to convert PCM to WAV", zap.Error(err))
+		return nil, fmt.Errorf("failed to convert PCM to WAV: %w", err)
+	}
+
+	g.logger.Logger(ctx).Info("[GeminiAPI] Successfully converted PCM to WAV",
+		zap.Int("pcm_size", len(pcmData)),
+		zap.Int("wav_size", len(wavData)))
+
+	// Write debug file if enabled
+	writeWAVToDebugFile(ctx, wavData, g.logger)
+
+	return wavData, nil
 }
 
 func (g *Gemini) GetResponseOnlyFunction() *genai.Tool {

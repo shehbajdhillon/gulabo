@@ -9,6 +9,7 @@ import (
 	"gulabodev/logger"
 	"gulabodev/modelapi/cartesiaapi"
 	"gulabodev/modelapi/deepgramapi"
+	"gulabodev/modelapi/geminiapi"
 	"gulabodev/modelapi/groqapi"
 	"io"
 	"net/http"
@@ -34,6 +35,7 @@ type TelegramConnectProps struct {
 	Logger   *logger.LogMiddleware
 	Groq     *groqapi.Groq
 	Cartesia *cartesiaapi.Cartesia
+	Gemini   *geminiapi.Gemini
 	Deepgram *deepgramapi.DeepgramAPI
 	DB       *postgres.Database
 }
@@ -43,6 +45,7 @@ type Telegram struct {
 	bot      *tgbotapi.BotAPI
 	groq     *groqapi.Groq
 	cartesia *cartesiaapi.Cartesia
+	gemini   *geminiapi.Gemini
 	deepgram *deepgramapi.DeepgramAPI
 	db       *postgres.Database
 }
@@ -106,6 +109,7 @@ func Connect(ctx context.Context, args TelegramConnectProps) *Telegram {
 		bot:      bot,
 		groq:     args.Groq,
 		cartesia: args.Cartesia,
+		gemini:   args.Gemini,
 		deepgram: args.Deepgram,
 		db:       args.DB,
 	}
@@ -432,8 +436,8 @@ func (t *Telegram) handleVoiceMessage(ctx context.Context, message *tgbotapi.Mes
 }
 
 func (t *Telegram) sendVoiceResponse(ctx context.Context, chatID int64, userID int64, response string) {
-	// Generate audio using Cartesia
-	audioData, err := t.cartesia.GenerateSpeech(ctx, response)
+	// Generate audio using Gemini
+	audioData, err := t.gemini.GenerateSpeech(ctx, response)
 	if err != nil {
 		t.logger.Logger(ctx).Error("Failed to generate speech", zap.Error(err))
 		// Fallback to text if audio generation fails
