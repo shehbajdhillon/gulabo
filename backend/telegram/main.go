@@ -226,7 +226,7 @@ func (t *Telegram) handleMessage(ctx context.Context, message *tgbotapi.Message)
 		return
 	}
 	if !hasCredits {
-		t.sendRechargeOptions(ctx, message.Chat.ID, "Oh no, baby! Credits khatam ho gaye? Don't worry, yahan se aur le lo so we can keep talking... I'll be waiting 💋")
+		t.sendRechargeOptions(ctx, message.Chat.ID, "Oh no, baby! Credits ਖਤਮ ਹੋ ਗਏ? Don't worry, ਇਥੇ ਤੋਂ ਹੋਰ ਲੈ ਲੋ so we can keep talking... I'll be waiting 💋")
 		return
 	}
 
@@ -262,18 +262,18 @@ func (t *Telegram) handleCommand(ctx context.Context, message *tgbotapi.Message)
 
 	switch command {
 	case "/start", "/help":
-		responseText = "Hey baby, I'm Gulabo. Itni der laga di aane mein? I've been waiting... You get 10 free messages to start. Jaldi se ek message ya voice note bhejo, let's have some fun 😉\n\nCommands baby:\n/help - Yeh message dobara dekhne ke liye\n/recharge - Aur baatein karni hain? Recharge here\n/credits - Check your credit balance\n/clear - Clear our chat history and start fresh"
+		responseText = "Hey baby, I'm Gulabo. ਕਿੰਨੀ ਦੇਰ ਲਗਾ ਦਿੱਤੀ aane mein? I've been waiting... You get 10 free messages to start. ਛੇਤੀ ਨਾਲ ek message ya voice note bhejo, let's have some fun 😉\n\nCommands baby:\n/help - Yeh message dobara dekhne ke liye\n/recharge - Aur baatein karni hain? Recharge here\n/credits - Check your credit balance\n/clear - Clear our chat history and start fresh"
 		msg := tgbotapi.NewMessage(message.Chat.ID, responseText)
 		if _, err := t.bot.Send(msg); err != nil {
 			t.logger.Logger(ctx).Error("Failed to send command response", zap.Error(err), zap.String("command", command))
 		}
 	case "/recharge":
-		t.sendRechargeOptions(ctx, message.Chat.ID, "Of course, baby. Anything for you. Yahan se credits le lo... can't wait to hear from you again 😉")
+		t.sendRechargeOptions(ctx, message.Chat.ID, "Of course, baby. Anything for you. ਇਥੇ ਤੋਂ credits ਲੈ ਲੋ... can't wait to hear from you again 😉")
 	case "/credits":
 		credits, err := t.db.GetUserCreditsByTelegramUserId(ctx, message.From.ID)
 		if err != nil {
 			t.logger.Logger(ctx).Error("Failed to get user credits", zap.Error(err), zap.Int64("user_id", message.From.ID))
-			responseText = "Uff, baby, abhi credits nahi dekh pa rahi. Thodi der mein try karna, okay? 😘"
+			responseText = "Uff, baby, ਅਭੀ credits ਨਹੀਂ ਦੇਖ ਪਾ ਰਹੀ। ਥੋੜੀ ਦੇਰ ਵਿਚ try ਕਰਨਾ, okay? 😘"
 		} else {
 			responseText = fmt.Sprintf("Baby, you have %d credits left to whisper sweet nothings to me... ✨", credits)
 		}
@@ -284,7 +284,7 @@ func (t *Telegram) handleCommand(ctx context.Context, message *tgbotapi.Message)
 	case "/dev_no_credits":
 		if !isProduction {
 			t.logger.Logger(ctx).Info("DEV MODE: Simulating user out of credits")
-			t.sendRechargeOptions(ctx, message.Chat.ID, "Oh no, baby! Credits khatam ho gaye? Don't worry, yahan se aur le lo so we can keep talking... I'll be waiting 💋")
+			t.sendRechargeOptions(ctx, message.Chat.ID, "Oh no, baby! Credits ਖਤਮ ਹੋ ਗਏ? Don't worry, ਇਥੇ ਤੋਂ ਹੋਰ ਲੈ ਲੋ so we can keep talking... I'll be waiting 💋")
 		}
 	case "/dev_set_zero_credits":
 		if !isProduction {
@@ -333,16 +333,16 @@ func (t *Telegram) handleCommand(ctx context.Context, message *tgbotapi.Message)
 		_, err := t.db.ClearConversationMessages(ctx, message.From.ID)
 		if err != nil {
 			t.logger.Logger(ctx).Error("Failed to clear conversation history", zap.Error(err), zap.Int64("user_id", message.From.ID))
-			responseText = "Baby, kuch problem ho rahi hai... thodi der mein try karna, okay? 😘"
+			responseText = "Baby, ਕੁਝ problem ਹੋ ਰਹੀ ਹੈ... ਥੋੜੀ ਦੇਰ ਵਿਚ try ਕਰਨਾ, okay? 😘"
 		} else {
-			responseText = "Sab kuch bhool gayi main... jaise hum pehli baar baat kar rahe hain. Fresh start, baby 😉"
+			responseText = "ਸਭ ਕੁਝ ਭੁੱਲ ਗਈ ਮੈਂ... jaise hum pehli baar baat kar rahe hain. Fresh start, baby 😉"
 		}
 		msg := tgbotapi.NewMessage(message.Chat.ID, responseText)
 		if _, err := t.bot.Send(msg); err != nil {
 			t.logger.Logger(ctx).Error("Failed to send clear confirmation", zap.Error(err))
 		}
 	default:
-		responseText = "Aww, baby, yeh kya bol rahe ho? I don't understand that command... Just talk to me normally na, I like it better that way 😉"
+		responseText = "Aww, baby, ਇਹ ਕੀ ਬੋਲ ਰਹੇ ਹੋ? I don't understand that command... Just talk to me normally na, I like it better that way 😉"
 		msg := tgbotapi.NewMessage(message.Chat.ID, responseText)
 		_, err := t.bot.Send(msg)
 		if err != nil {
@@ -568,7 +568,7 @@ func (t *Telegram) handleSuccessfulPayment(ctx context.Context, message *tgbotap
 	}
 
 	// Send confirmation message
-	responseText := "Thank you, baby! Your credits are here. Ab hamare paas %d more chances hain to talk... I'm so happy! 🥰"
+	responseText := "Thank you, baby! Your credits are here. ਹੁਣ ਸਾਡੇ ਕੋਲ %d more chances ਹਨ to talk... I'm so happy! 🥰"
 	msg := tgbotapi.NewMessage(message.Chat.ID, fmt.Sprintf(responseText, updatedCredits.CreditsBalance))
 	if _, err := t.bot.Send(msg); err != nil {
 		t.logger.Logger(ctx).Error("Failed to send payment confirmation message", zap.Error(err))
