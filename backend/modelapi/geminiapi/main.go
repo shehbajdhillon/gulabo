@@ -27,7 +27,7 @@ type GeminiConnectProps struct {
 }
 
 const (
-	maxRetries = 3
+	maxRetries = 5
 	baseDelay  = 1 * time.Second
 )
 
@@ -273,29 +273,68 @@ func (g *Gemini) GenerateSpeech(ctx context.Context, inputText string) ([]byte, 
 
 	temperature := float32(1)
 
-	response, err := g.client.Models.GenerateContent(ctx,
-		GEMINI_TTS_MODEL_NAME,
-		[]*genai.Content{
-			{Parts: []*genai.Part{
-				{Text: userInstruction},
-			}},
-		},
-		&genai.GenerateContentConfig{
-			Temperature:        &temperature,
-			ResponseModalities: []string{"audio"},
-			SpeechConfig: &genai.SpeechConfig{
-				VoiceConfig: &genai.VoiceConfig{
-					PrebuiltVoiceConfig: &genai.PrebuiltVoiceConfig{
-						VoiceName: "Aoede",
+	var response *genai.GenerateContentResponse
+	var err error
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		span.AddEvent("Speech Generation Attempt", trace.WithAttributes(attribute.Int("attemptNumber", attempt+1)))
+		g.logger.Logger(ctx).Info("[GeminiAPI] Speech generation attempt", zap.Int("attempt", attempt+1))
+
+		response, err = g.client.Models.GenerateContent(ctx,
+			GEMINI_TTS_MODEL_NAME,
+			[]*genai.Content{
+				{Parts: []*genai.Part{
+					{Text: userInstruction},
+				}},
+			},
+			&genai.GenerateContentConfig{
+				Temperature:        &temperature,
+				ResponseModalities: []string{"audio"},
+				SpeechConfig: &genai.SpeechConfig{
+					VoiceConfig: &genai.VoiceConfig{
+						PrebuiltVoiceConfig: &genai.PrebuiltVoiceConfig{
+							VoiceName: "Aoede",
+						},
 					},
 				},
-			},
-		})
+			})
 
-	if err != nil || response == nil || response.Candidates == nil || len(response.Candidates) == 0 || response.Candidates[0].Content == nil {
-		return nil, fmt.Errorf("failed to generate speech: %w", err)
+		if err != nil || response == nil || response.Candidates == nil || len(response.Candidates) == 0 || response.Candidates[0].Content == nil || len(response.Candidates[0].Content.Parts) == 0 || response.Candidates[0].Content.Parts[0].InlineData == nil {
+			if err != nil {
+				span.RecordError(err)
+				g.logger.Logger(ctx).Error("[GeminiAPI] Error generating speech", zap.Error(err), zap.Int("attempt", attempt+1))
+			} else {
+				g.logger.Logger(ctx).Warn("[GeminiAPI] Received empty or invalid speech response", zap.Int("attempt", attempt+1))
+				span.AddEvent("EmptySpeechResponse")
+			}
+
+			if attempt < maxRetries-1 {
+				delay := exponentialBackoff(attempt)
+				span.AddEvent("Speech Backoff", trace.WithAttributes(attribute.Int64("delayMs", delay.Milliseconds())))
+				g.logger.Logger(ctx).Warn("[GeminiAPI] Speech generation failed, retrying...",
+					zap.Error(err),
+					zap.Int("attempt", attempt+1),
+					zap.Int("maxRetries", maxRetries))
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(delay):
+				}
+			}
+			continue
+		}
+
+		// If we get here, we have a valid response
+		break
 	}
 
+	// Final error check after all retries
+	if err != nil || response == nil || response.Candidates == nil || len(response.Candidates) == 0 || response.Candidates[0].Content == nil || len(response.Candidates[0].Content.Parts) == 0 || response.Candidates[0].Content.Parts[0].InlineData == nil {
+		g.logger.Logger(ctx).Error("[GeminiAPI] Final error generating speech after retries:", zap.Error(err))
+		return nil, fmt.Errorf("failed to generate speech after %d retries: %w", maxRetries, err)
+	}
+
+	span.AddEvent("Speech generation successful")
 	pcmData := response.Candidates[0].Content.Parts[0].InlineData.Data
 
 	// Convert PCM to WAV
