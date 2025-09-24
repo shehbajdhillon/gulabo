@@ -27,7 +27,7 @@ type GeminiConnectProps struct {
 }
 
 const (
-	maxRetries = 5
+	maxRetries = 3
 	baseDelay  = 1 * time.Second
 )
 
