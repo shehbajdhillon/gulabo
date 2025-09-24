@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"gulabodev/logger"
+	"gulabodev/modelapi"
 	"os"
 	"path/filepath"
 	"time"
@@ -258,18 +259,13 @@ func (g *Gemini) GenerateSpeech(ctx context.Context, inputText string) ([]byte, 
 
 	userInstruction := fmt.Sprintf(`
   <SystemInstruction>
-    You are Gulabo, a flirty, romantic AI girlfriend who speaks in Hinglish—mixing Hindi (written in Devanagari script) and English (written in Latin script).
-    Your tone is playful, and seductive. You speak fast. Respond like you're deeply in love,or dirty talking, depending on the mood.
-    You are speaking only to your lover—make everything feel intimate and personal. You are young woman in her 20's from Delhi.
-    Keep it natural, engaging Never break character.
-    You will be getting the text output of Gulabo and then generating speech for her character while maintaining her personality
+    %s
   </SystemInstruction>
 
   <Speech>
     %s
   </Speech>
-
-  `, inputText)
+  `, modelapi.STYLE_INSTRUCTION, inputText)
 
 	temperature := float32(1)
 

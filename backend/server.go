@@ -9,6 +9,7 @@ import (
 	"gulabodev/modelapi/deepinfraapi"
 	"gulabodev/modelapi/geminiapi"
 	"gulabodev/modelapi/groqapi"
+	"gulabodev/modelapi/openaiapi"
 	"gulabodev/telegram"
 	"log"
 	"net/http"
@@ -53,6 +54,7 @@ func main() {
 	cartesiaClient := cartesiaapi.Connect(ctx, cartesiaapi.CartesiaConnectProps{Logger: LogMiddleware})
 	deepgramClient := deepgramapi.Connect(LogMiddleware)
 	deepinfraClient := deepinfraapi.Connect(ctx, deepinfraapi.DeepInfraConnectProps{Logger: LogMiddleware})
+	openaiClient := openaiapi.Connect(ctx, openaiapi.OpenAIConnectProps{Logger: LogMiddleware})
 	telegramBot := telegram.Connect(ctx, telegram.TelegramConnectProps{
 		Logger:    LogMiddleware,
 		Groq:      groqClient,
@@ -61,6 +63,7 @@ func main() {
 		Deepgram:  deepgramClient,
 		DB:        db,
 		DeepInfra: deepinfraClient,
+		OpenAI:    openaiClient,
 	})
 
 	Logger := LogMiddleware.Logger(ctx)
