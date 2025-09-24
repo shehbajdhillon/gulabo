@@ -12,6 +12,7 @@ import (
 	"gulabodev/modelapi/deepinfraapi"
 	"gulabodev/modelapi/geminiapi"
 	"gulabodev/modelapi/groqapi"
+	"gulabodev/modelapi/openaiapi"
 	"io"
 	"net/http"
 	"os"
@@ -39,6 +40,7 @@ type TelegramConnectProps struct {
 	Gemini    *geminiapi.Gemini
 	Deepgram  *deepgramapi.DeepgramAPI
 	DeepInfra *deepinfraapi.DeepInfra
+	OpenAI    *openaiapi.OpenAI
 	DB        *postgres.Database
 }
 
@@ -51,6 +53,7 @@ type Telegram struct {
 	deepinfra *deepinfraapi.DeepInfra
 	deepgram  *deepgramapi.DeepgramAPI
 	db        *postgres.Database
+	openai    *openaiapi.OpenAI
 }
 
 func Connect(ctx context.Context, args TelegramConnectProps) *Telegram {
@@ -116,6 +119,7 @@ func Connect(ctx context.Context, args TelegramConnectProps) *Telegram {
 		deepgram:  args.Deepgram,
 		db:        args.DB,
 		deepinfra: args.DeepInfra,
+		openai:    args.OpenAI,
 	}
 }
 
@@ -441,7 +445,7 @@ func (t *Telegram) handleVoiceMessage(ctx context.Context, message *tgbotapi.Mes
 
 func (t *Telegram) sendVoiceResponse(ctx context.Context, chatID int64, userID int64, response string) {
 	// Generate audio using Gemini
-	audioData, err := t.gemini.GenerateSpeech(ctx, response)
+	audioData, err := t.openai.GenerateSpeech(ctx, response)
 	if err != nil {
 		t.logger.Logger(ctx).Error("Failed to generate speech", zap.Error(err))
 		// Fallback to text if audio generation fails
