@@ -441,8 +441,7 @@ func (t *Telegram) handleVoiceMessage(ctx context.Context, message *tgbotapi.Mes
 
 func (t *Telegram) sendVoiceResponse(ctx context.Context, chatID int64, userID int64, response string) {
 	// Generate audio using Gemini
-	audioData, err := t.deepinfra.GenerateSpeech(ctx, response)
-	// audioData, err := t.gemini.GenerateSpeech(ctx, response)
+	audioData, err := t.gemini.GenerateSpeech(ctx, response)
 	if err != nil {
 		t.logger.Logger(ctx).Error("Failed to generate speech", zap.Error(err))
 		// Fallback to text if audio generation fails
