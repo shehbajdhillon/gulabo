@@ -19,7 +19,7 @@ import (
 
 const (
 	GEMINI_MODEL_NAME     = "gemini-2.5-flash"
-	GEMINI_TTS_MODEL_NAME = "gemini-2.5-pro-preview-tts"
+	GEMINI_TTS_MODEL_NAME = "gemini-2.5-flash-preview-tts"
 )
 
 type GeminiConnectProps struct {
