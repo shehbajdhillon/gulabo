@@ -9,6 +9,7 @@ import (
 	"gulabodev/logger"
 	"gulabodev/modelapi/cartesiaapi"
 	"gulabodev/modelapi/deepgramapi"
+	"gulabodev/modelapi/deepinfraapi"
 	"gulabodev/modelapi/geminiapi"
 	"gulabodev/modelapi/groqapi"
 	"io"
@@ -32,22 +33,24 @@ const (
 )
 
 type TelegramConnectProps struct {
-	Logger   *logger.LogMiddleware
-	Groq     *groqapi.Groq
-	Cartesia *cartesiaapi.Cartesia
-	Gemini   *geminiapi.Gemini
-	Deepgram *deepgramapi.DeepgramAPI
-	DB       *postgres.Database
+	Logger    *logger.LogMiddleware
+	Groq      *groqapi.Groq
+	Cartesia  *cartesiaapi.Cartesia
+	Gemini    *geminiapi.Gemini
+	Deepgram  *deepgramapi.DeepgramAPI
+	DeepInfra *deepinfraapi.DeepInfra
+	DB        *postgres.Database
 }
 
 type Telegram struct {
-	logger   *logger.LogMiddleware
-	bot      *tgbotapi.BotAPI
-	groq     *groqapi.Groq
-	cartesia *cartesiaapi.Cartesia
-	gemini   *geminiapi.Gemini
-	deepgram *deepgramapi.DeepgramAPI
-	db       *postgres.Database
+	logger    *logger.LogMiddleware
+	bot       *tgbotapi.BotAPI
+	groq      *groqapi.Groq
+	cartesia  *cartesiaapi.Cartesia
+	gemini    *geminiapi.Gemini
+	deepinfra *deepinfraapi.DeepInfra
+	deepgram  *deepgramapi.DeepgramAPI
+	db        *postgres.Database
 }
 
 func Connect(ctx context.Context, args TelegramConnectProps) *Telegram {
@@ -105,13 +108,14 @@ func Connect(ctx context.Context, args TelegramConnectProps) *Telegram {
 	)
 
 	return &Telegram{
-		logger:   args.Logger,
-		bot:      bot,
-		groq:     args.Groq,
-		cartesia: args.Cartesia,
-		gemini:   args.Gemini,
-		deepgram: args.Deepgram,
-		db:       args.DB,
+		logger:    args.Logger,
+		bot:       bot,
+		groq:      args.Groq,
+		cartesia:  args.Cartesia,
+		gemini:    args.Gemini,
+		deepgram:  args.Deepgram,
+		db:        args.DB,
+		deepinfra: args.DeepInfra,
 	}
 }
 
@@ -437,7 +441,8 @@ func (t *Telegram) handleVoiceMessage(ctx context.Context, message *tgbotapi.Mes
 
 func (t *Telegram) sendVoiceResponse(ctx context.Context, chatID int64, userID int64, response string) {
 	// Generate audio using Gemini
-	audioData, err := t.gemini.GenerateSpeech(ctx, response)
+	audioData, err := t.deepinfra.GenerateSpeech(ctx, response)
+	// audioData, err := t.gemini.GenerateSpeech(ctx, response)
 	if err != nil {
 		t.logger.Logger(ctx).Error("Failed to generate speech", zap.Error(err))
 		// Fallback to text if audio generation fails
@@ -450,7 +455,7 @@ func (t *Telegram) sendVoiceResponse(ctx context.Context, chatID int64, userID i
 	} else {
 		// Send voice message
 		voice := tgbotapi.NewVoice(chatID, tgbotapi.FileBytes{
-			Name:  "response.wav",
+			Name:  "response.mp3",
 			Bytes: audioData,
 		})
 		_, err = t.bot.Send(voice)
